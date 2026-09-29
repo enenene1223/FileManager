@@ -1,42 +1,39 @@
 #include "Operation.h"
 
 Operation::Operation()
-    : type(OperationType::CREATE),
-      node(nullptr),
-      old_name(),
-      new_name(),
-      old_parent(nullptr),
-      new_parent(nullptr),
-      old_path(),
-      new_path()
-{
-}
+    : type(OperationType::CREATE)
+    , node(nullptr)
+    , old_name()
+    , new_name()
+    , old_parent(nullptr)
+    , new_parent(nullptr)
+    , old_path()
+    , new_path()
+{}
 
 OperationStack::OperationStack()
-    : top_(nullptr),
-      size_(0)
-{
-}
+    : top_(nullptr)
+    , size_(0)
+{}
 
 OperationStack::~OperationStack()
 {
     clear();
 }
 
-void OperationStack::push(const Operation& operation)
+void OperationStack::push(const Operation &operation)
 {
     top_ = new Node(operation, top_);
     ++size_;
 }
 
-bool OperationStack::pop(Operation& operation)
+bool OperationStack::pop(Operation &operation)
 {
-    if (top_ == nullptr)
-    {
+    if (top_ == nullptr) {
         return false;
     }
 
-    Node* node = top_;
+    Node *node = top_;
     operation = node->operation;
     top_ = node->next;
 
@@ -45,10 +42,9 @@ bool OperationStack::pop(Operation& operation)
     return true;
 }
 
-bool OperationStack::peek(Operation& operation) const
+bool OperationStack::peek(Operation &operation) const
 {
-    if (top_ == nullptr)
-    {
+    if (top_ == nullptr) {
         return false;
     }
 
@@ -68,9 +64,8 @@ std::size_t OperationStack::size() const
 
 void OperationStack::clear()
 {
-    while (top_ != nullptr)
-    {
-        Node* node = top_;
+    while (top_ != nullptr) {
+        Node *node = top_;
         top_ = top_->next;
         delete node;
     }

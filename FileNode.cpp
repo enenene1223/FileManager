@@ -1,21 +1,20 @@
 #include "FileNode.h"
 
-FileNode::FileNode(const std::string& name, bool is_directory)
-    : name_(name),
-      is_directory_(is_directory),
-      size_(0),
-      created_time_(),
-      modified_time_(),
-      content_(),
-      parent_(nullptr),
-      first_child_(nullptr),
-      next_sibling_(nullptr)
-{
-}
+FileNode::FileNode(const std::string &name, bool is_directory)
+    : name_(name)
+    , is_directory_(is_directory)
+    , size_(0)
+    , created_time_()
+    , modified_time_()
+    , content_()
+    , parent_(nullptr)
+    , first_child_(nullptr)
+    , next_sibling_(nullptr)
+{}
 
 FileNode::~FileNode() = default;
 
-const std::string& FileNode::get_name() const
+const std::string &FileNode::get_name() const
 {
     return name_;
 }
@@ -30,32 +29,32 @@ long long FileNode::get_size() const
     return size_;
 }
 
-const std::string& FileNode::get_created_time() const
+const std::string &FileNode::get_created_time() const
 {
     return created_time_;
 }
 
-const std::string& FileNode::get_modified_time() const
+const std::string &FileNode::get_modified_time() const
 {
     return modified_time_;
 }
 
-const std::string& FileNode::get_content() const
+const std::string &FileNode::get_content() const
 {
     return content_;
 }
 
-FileNode* FileNode::get_parent() const
+FileNode *FileNode::get_parent() const
 {
     return parent_;
 }
 
-FileNode* FileNode::get_first_child() const
+FileNode *FileNode::get_first_child() const
 {
     return first_child_;
 }
 
-FileNode* FileNode::get_next_sibling() const
+FileNode *FileNode::get_next_sibling() const
 {
     return next_sibling_;
 }
