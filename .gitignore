@@ -67,3 +67,23 @@ vcpkg_installed/
 # test output & cache
 Testing/
 .cache/
+
+# Qt Creator
+.qtcreator/
+*.user
+*.pro.user
+*.pro.user.*
+
+# Qt / qmake generated files
+*.qmake.stash
+
+# Qt Creator generated files
+*.autosave
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
