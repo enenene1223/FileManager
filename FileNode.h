@@ -13,20 +13,20 @@ class FileSystem;
 class FileNode
 {
 public:
-    FileNode(const std::string& name, bool is_directory);
+    FileNode(const std::string &name, bool is_directory);
     ~FileNode();
 
     // 只读访问接口。其他模块不要直接修改节点内部数据。
-    const std::string& get_name() const;
+    const std::string &get_name() const;
     bool is_directory() const;
     long long get_size() const;
-    const std::string& get_created_time() const;
-    const std::string& get_modified_time() const;
-    const std::string& get_content() const;
+    const std::string &get_created_time() const;
+    const std::string &get_modified_time() const;
+    const std::string &get_content() const;
 
-    FileNode* get_parent() const;
-    FileNode* get_first_child() const;
-    FileNode* get_next_sibling() const;
+    FileNode *get_parent() const;
+    FileNode *get_first_child() const;
+    FileNode *get_next_sibling() const;
 
 private:
     std::string name_;
@@ -36,9 +36,9 @@ private:
     std::string modified_time_;
     std::string content_;
 
-    FileNode* parent_;
-    FileNode* first_child_;
-    FileNode* next_sibling_;
+    FileNode *parent_;
+    FileNode *first_child_;
+    FileNode *next_sibling_;
 
     // 只有 FileSystem 负责修改树结构和节点属性。
     friend class FileSystem;

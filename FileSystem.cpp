@@ -4,24 +4,21 @@
 #include <iomanip>
 #include <sstream>
 
-namespace
+namespace {
+bool contains_forbidden_name_character(const std::string &name)
 {
-    bool contains_forbidden_name_character(const std::string& name)
-    {
-        return name.find('/') != std::string::npos ||
-               name.find('\\') != std::string::npos ||
-               name.find('|') != std::string::npos ||
-               name.find('\n') != std::string::npos ||
-               name.find('\r') != std::string::npos;
-    }
+    return name.find('/') != std::string::npos || name.find('\\') != std::string::npos
+           || name.find('|') != std::string::npos || name.find('\n') != std::string::npos
+           || name.find('\r') != std::string::npos;
 }
+} // namespace
 
 FileSystem::FileSystem()
-    : root_(new FileNode("root", true)),
-      current_directory_(nullptr),
-      recycle_head_(nullptr),
-      recycle_count_(0),
-      last_error_(FileSystemError::NONE)
+    : root_(new FileNode("root", true))
+    , current_directory_(nullptr)
+    , recycle_head_(nullptr)
+    , recycle_count_(0)
+    , last_error_(FileSystemError::NONE)
 {
     const std::string current_time = now_string();
     root_->created_time_ = current_time;
@@ -37,38 +34,33 @@ FileSystem::~FileSystem()
     current_directory_ = nullptr;
 }
 
-FileNode* FileSystem::create_file(
-    FileNode* parent,
-    const std::string& name,
-    const std::string& content)
+FileNode *FileSystem::create_file(FileNode *parent,
+                                  const std::string &name,
+                                  const std::string &content)
 {
     set_error(FileSystemError::NONE);
 
-    if (parent == nullptr || !owns_active_node(parent))
-    {
+    if (parent == nullptr || !owns_active_node(parent)) {
         set_error(FileSystemError::INVALID_TARGET);
         return nullptr;
     }
 
-    if (!parent->is_directory_)
-    {
+    if (!parent->is_directory_) {
         set_error(FileSystemError::NOT_DIRECTORY);
         return nullptr;
     }
 
-    if (!is_valid_name(name))
-    {
+    if (!is_valid_name(name)) {
         set_error(FileSystemError::INVALID_NAME);
         return nullptr;
     }
 
-    if (has_name_conflict(parent, name))
-    {
+    if (has_name_conflict(parent, name)) {
         set_error(FileSystemError::NAME_CONFLICT);
         return nullptr;
     }
 
-    FileNode* node = new FileNode(name, false);
+    FileNode *node = new FileNode(name, false);
     const std::string current_time = now_string();
     node->created_time_ = current_time;
     node->modified_time_ = current_time;
@@ -79,37 +71,31 @@ FileNode* FileSystem::create_file(
     return node;
 }
 
-FileNode* FileSystem::create_folder(
-    FileNode* parent,
-    const std::string& name)
+FileNode *FileSystem::create_folder(FileNode *parent, const std::string &name)
 {
     set_error(FileSystemError::NONE);
 
-    if (parent == nullptr || !owns_active_node(parent))
-    {
+    if (parent == nullptr || !owns_active_node(parent)) {
         set_error(FileSystemError::INVALID_TARGET);
         return nullptr;
     }
 
-    if (!parent->is_directory_)
-    {
+    if (!parent->is_directory_) {
         set_error(FileSystemError::NOT_DIRECTORY);
         return nullptr;
     }
 
-    if (!is_valid_name(name))
-    {
+    if (!is_valid_name(name)) {
         set_error(FileSystemError::INVALID_NAME);
         return nullptr;
     }
 
-    if (has_name_conflict(parent, name))
-    {
+    if (has_name_conflict(parent, name)) {
         set_error(FileSystemError::NAME_CONFLICT);
         return nullptr;
     }
 
-    FileNode* node = new FileNode(name, true);
+    FileNode *node = new FileNode(name, true);
     const std::string current_time = now_string();
     node->created_time_ = current_time;
     node->modified_time_ = current_time;
@@ -118,34 +104,30 @@ FileNode* FileSystem::create_folder(
     return node;
 }
 
-bool FileSystem::delete_node(FileNode* node)
+bool FileSystem::delete_node(FileNode *node)
 {
     set_error(FileSystemError::NONE);
 
-    if (node == nullptr || !owns_active_node(node))
-    {
+    if (node == nullptr || !owns_active_node(node)) {
         set_error(FileSystemError::INVALID_NODE);
         return false;
     }
 
-    if (node == root_)
-    {
+    if (node == root_) {
         set_error(FileSystemError::ROOT_OPERATION);
         return false;
     }
 
     const std::string original_path = get_path(node);
-    FileNode* old_parent = node->parent_;
+    FileNode *old_parent = node->parent_;
 
-    if (!detach_node(node))
-    {
+    if (!detach_node(node)) {
         set_error(FileSystemError::INVALID_NODE);
         return false;
     }
 
     // 如果当前目录位于被删除子树中，退回到删除前的父目录。
-    if (current_directory_ == node || is_descendant(current_directory_, node))
-    {
+    if (current_directory_ == node || is_descendant(current_directory_, node)) {
         current_directory_ = old_parent != nullptr ? old_parent : root_;
     }
 
@@ -157,33 +139,27 @@ bool FileSystem::delete_node(FileNode* node)
     return true;
 }
 
-bool FileSystem::restore_node(
-    FileNode* node,
-    FileNode* target_parent)
+bool FileSystem::restore_node(FileNode *node, FileNode *target_parent)
 {
     set_error(FileSystemError::NONE);
 
-    RecycleEntry* entry = find_recycle_entry(node);
-    if (entry == nullptr)
-    {
+    RecycleEntry *entry = find_recycle_entry(node);
+    if (entry == nullptr) {
         set_error(FileSystemError::NOT_FOUND);
         return false;
     }
 
-    if (target_parent == nullptr || !owns_active_node(target_parent))
-    {
+    if (target_parent == nullptr || !owns_active_node(target_parent)) {
         set_error(FileSystemError::INVALID_TARGET);
         return false;
     }
 
-    if (!target_parent->is_directory_)
-    {
+    if (!target_parent->is_directory_) {
         set_error(FileSystemError::NOT_DIRECTORY);
         return false;
     }
 
-    if (has_name_conflict(target_parent, node->name_))
-    {
+    if (has_name_conflict(target_parent, node->name_)) {
         set_error(FileSystemError::NAME_CONFLICT);
         return false;
     }
@@ -196,19 +172,15 @@ bool FileSystem::restore_node(
     return true;
 }
 
-bool FileSystem::permanent_delete(FileNode* node)
+bool FileSystem::permanent_delete(FileNode *node)
 {
     set_error(FileSystemError::NONE);
 
-    RecycleEntry* entry = find_recycle_entry(node);
-    if (entry == nullptr)
-    {
-        if (node != nullptr && owns_active_node(node))
-        {
+    RecycleEntry *entry = find_recycle_entry(node);
+    if (entry == nullptr) {
+        if (node != nullptr && owns_active_node(node)) {
             set_error(FileSystemError::NOT_IN_RECYCLE_BIN);
-        }
-        else
-        {
+        } else {
             set_error(FileSystemError::NOT_FOUND);
         }
         return false;
@@ -221,45 +193,38 @@ bool FileSystem::permanent_delete(FileNode* node)
 
 void FileSystem::clear_recycle_bin()
 {
-    RecycleEntry* entry = recycle_head_;
+    RecycleEntry *entry = recycle_head_;
     recycle_head_ = nullptr;
     recycle_count_ = 0;
 
-    while (entry != nullptr)
-    {
-        RecycleEntry* next = entry->next;
+    while (entry != nullptr) {
+        RecycleEntry *next = entry->next;
         destroy_subtree(entry->node);
         delete entry;
         entry = next;
     }
 }
 
-bool FileSystem::rename_node(
-    FileNode* node,
-    const std::string& new_name)
+bool FileSystem::rename_node(FileNode *node, const std::string &new_name)
 {
     set_error(FileSystemError::NONE);
 
-    if (node == nullptr || !owns_active_node(node))
-    {
+    if (node == nullptr || !owns_active_node(node)) {
         set_error(FileSystemError::INVALID_NODE);
         return false;
     }
 
-    if (node == root_)
-    {
+    if (node == root_) {
         set_error(FileSystemError::ROOT_OPERATION);
         return false;
     }
 
-    if (!is_valid_name(new_name))
-    {
+    if (!is_valid_name(new_name)) {
         set_error(FileSystemError::INVALID_NAME);
         return false;
     }
 
-    if (has_name_conflict(node->parent_, new_name, node))
-    {
+    if (has_name_conflict(node->parent_, new_name, node)) {
         set_error(FileSystemError::NAME_CONFLICT);
         return false;
     }
@@ -269,49 +234,33 @@ bool FileSystem::rename_node(
     return true;
 }
 
-bool FileSystem::move_node(
-    FileNode* node,
-    FileNode* target_parent)
+bool FileSystem::move_node(FileNode *node, FileNode *target_parent)
 {
     set_error(FileSystemError::NONE);
 
-    if (!can_move(node, target_parent))
-    {
-        if (node == nullptr || !owns_active_node(node))
-        {
+    if (!can_move(node, target_parent)) {
+        if (node == nullptr || !owns_active_node(node)) {
             set_error(FileSystemError::INVALID_NODE);
-        }
-        else if (target_parent == nullptr || !owns_active_node(target_parent))
-        {
+        } else if (target_parent == nullptr || !owns_active_node(target_parent)) {
             set_error(FileSystemError::INVALID_TARGET);
-        }
-        else if (!target_parent->is_directory_)
-        {
+        } else if (!target_parent->is_directory_) {
             set_error(FileSystemError::NOT_DIRECTORY);
-        }
-        else if (node == root_ || node == target_parent || is_descendant(target_parent, node))
-        {
+        } else if (node == root_ || node == target_parent || is_descendant(target_parent, node)) {
             set_error(FileSystemError::INVALID_MOVE);
-        }
-        else if (has_name_conflict(target_parent, node->name_, node))
-        {
+        } else if (has_name_conflict(target_parent, node->name_, node)) {
             set_error(FileSystemError::NAME_CONFLICT);
-        }
-        else
-        {
+        } else {
             set_error(FileSystemError::INVALID_MOVE);
         }
         return false;
     }
 
     // 已经在目标目录，无需操作。
-    if (node->parent_ == target_parent)
-    {
+    if (node->parent_ == target_parent) {
         return true;
     }
 
-    if (!detach_node(node))
-    {
+    if (!detach_node(node)) {
         set_error(FileSystemError::INVALID_NODE);
         return false;
     }
@@ -321,38 +270,31 @@ bool FileSystem::move_node(
     return true;
 }
 
-FileNode* FileSystem::copy_node(
-    FileNode* node,
-    FileNode* target_parent)
+FileNode *FileSystem::copy_node(FileNode *node, FileNode *target_parent)
 {
     set_error(FileSystemError::NONE);
 
-    if (node == nullptr || !owns_active_node(node))
-    {
+    if (node == nullptr || !owns_active_node(node)) {
         set_error(FileSystemError::INVALID_NODE);
         return nullptr;
     }
 
-    if (target_parent == nullptr || !owns_active_node(target_parent))
-    {
+    if (target_parent == nullptr || !owns_active_node(target_parent)) {
         set_error(FileSystemError::INVALID_TARGET);
         return nullptr;
     }
 
-    if (!target_parent->is_directory_)
-    {
+    if (!target_parent->is_directory_) {
         set_error(FileSystemError::NOT_DIRECTORY);
         return nullptr;
     }
 
-    if (node == target_parent || is_descendant(target_parent, node))
-    {
+    if (node == target_parent || is_descendant(target_parent, node)) {
         set_error(FileSystemError::INVALID_MOVE);
         return nullptr;
     }
 
-    if (has_name_conflict(target_parent, node->name_))
-    {
+    if (has_name_conflict(target_parent, node->name_)) {
         set_error(FileSystemError::NAME_CONFLICT);
         return nullptr;
     }
@@ -360,20 +302,15 @@ FileNode* FileSystem::copy_node(
     return clone_subtree(node, target_parent);
 }
 
-FileNode* FileSystem::find_child(
-    FileNode* parent,
-    const std::string& name) const
+FileNode *FileSystem::find_child(FileNode *parent, const std::string &name) const
 {
-    if (parent == nullptr || !owns_active_node(parent) || !parent->is_directory_)
-    {
+    if (parent == nullptr || !owns_active_node(parent) || !parent->is_directory_) {
         return nullptr;
     }
 
-    FileNode* current = parent->first_child_;
-    while (current != nullptr)
-    {
-        if (current->name_ == name)
-        {
+    FileNode *current = parent->first_child_;
+    while (current != nullptr) {
+        if (current->name_ == name) {
             return current;
         }
         current = current->next_sibling_;
@@ -382,55 +319,44 @@ FileNode* FileSystem::find_child(
     return nullptr;
 }
 
-FileNode* FileSystem::find_by_path(const std::string& path) const
+FileNode *FileSystem::find_by_path(const std::string &path) const
 {
-    if (path.empty())
-    {
+    if (path.empty()) {
         return nullptr;
     }
 
     const bool absolute = path.front() == '/';
-    FileNode* current = absolute ? root_ : current_directory_;
+    FileNode *current = absolute ? root_ : current_directory_;
 
-    if (current == nullptr)
-    {
+    if (current == nullptr) {
         return nullptr;
     }
 
-    if (path == "/" || path == ".")
-    {
+    if (path == "/" || path == ".") {
         return current;
     }
 
     std::size_t start = absolute ? 1 : 0;
 
-    while (start <= path.size())
-    {
+    while (start <= path.size()) {
         const std::size_t end = path.find('/', start);
         const std::size_t actual_end = (end == std::string::npos) ? path.size() : end;
         const std::string part = path.substr(start, actual_end - start);
 
-        if (!part.empty() && part != ".")
-        {
-            if (part == "..")
-            {
-                if (current->parent_ != nullptr)
-                {
+        if (!part.empty() && part != ".") {
+            if (part == "..") {
+                if (current->parent_ != nullptr) {
                     current = current->parent_;
                 }
-            }
-            else
-            {
+            } else {
                 current = find_child(current, part);
-                if (current == nullptr)
-                {
+                if (current == nullptr) {
                     return nullptr;
                 }
             }
         }
 
-        if (actual_end == path.size())
-        {
+        if (actual_end == path.size()) {
             break;
         }
 
@@ -440,20 +366,18 @@ FileNode* FileSystem::find_by_path(const std::string& path) const
     return current;
 }
 
-FileNode* FileSystem::get_current_directory() const
+FileNode *FileSystem::get_current_directory() const
 {
     return current_directory_;
 }
 
-bool FileSystem::change_directory(FileNode* directory)
+bool FileSystem::change_directory(FileNode *directory)
 {
-    if (directory == nullptr || !owns_active_node(directory))
-    {
+    if (directory == nullptr || !owns_active_node(directory)) {
         return false;
     }
 
-    if (!directory->is_directory_)
-    {
+    if (!directory->is_directory_) {
         return false;
     }
 
@@ -461,26 +385,22 @@ bool FileSystem::change_directory(FileNode* directory)
     return true;
 }
 
-bool FileSystem::change_directory_by_path(const std::string& path)
+bool FileSystem::change_directory_by_path(const std::string &path)
 {
-    FileNode* directory = find_by_path(path);
+    FileNode *directory = find_by_path(path);
     return directory != nullptr && change_directory(directory);
 }
 
-bool FileSystem::set_content(
-    FileNode* file,
-    const std::string& content)
+bool FileSystem::set_content(FileNode *file, const std::string &content)
 {
     set_error(FileSystemError::NONE);
 
-    if (file == nullptr || !owns_active_node(file))
-    {
+    if (file == nullptr || !owns_active_node(file)) {
         set_error(FileSystemError::INVALID_NODE);
         return false;
     }
 
-    if (file->is_directory_)
-    {
+    if (file->is_directory_) {
         set_error(FileSystemError::NOT_FILE);
         return false;
     }
@@ -491,34 +411,30 @@ bool FileSystem::set_content(
     return true;
 }
 
-const std::string& FileSystem::get_content(FileNode* file) const
+const std::string &FileSystem::get_content(FileNode *file) const
 {
     static const std::string empty_content;
 
-    if (file == nullptr || !owns_active_node(file) || file->is_directory_)
-    {
+    if (file == nullptr || !owns_active_node(file) || file->is_directory_) {
         return empty_content;
     }
 
     return file->content_;
 }
 
-bool FileSystem::set_metadata(
-    FileNode* node,
-    long long size,
-    const std::string& created_time,
-    const std::string& modified_time)
+bool FileSystem::set_metadata(FileNode *node,
+                              long long size,
+                              const std::string &created_time,
+                              const std::string &modified_time)
 {
     set_error(FileSystemError::NONE);
 
-    if (node == nullptr || !owns_active_node(node))
-    {
+    if (node == nullptr || !owns_active_node(node)) {
         set_error(FileSystemError::INVALID_NODE);
         return false;
     }
 
-    if (size < 0)
-    {
+    if (size < 0) {
         set_error(FileSystemError::INVALID_METADATA);
         return false;
     }
@@ -529,23 +445,20 @@ bool FileSystem::set_metadata(
     return true;
 }
 
-std::string FileSystem::get_path(FileNode* node) const
+std::string FileSystem::get_path(FileNode *node) const
 {
-    if (node == nullptr || !owns_active_node(node))
-    {
+    if (node == nullptr || !owns_active_node(node)) {
         return std::string();
     }
 
-    if (node == root_)
-    {
+    if (node == root_) {
         return "/";
     }
 
     std::string path;
-    FileNode* current = node;
+    FileNode *current = node;
 
-    while (current != nullptr && current != root_)
-    {
+    while (current != nullptr && current != root_) {
         path = "/" + current->name_ + path;
         current = current->parent_;
     }
@@ -553,31 +466,28 @@ std::string FileSystem::get_path(FileNode* node) const
     return current == root_ ? path : std::string();
 }
 
-FileNode* FileSystem::get_root() const
+FileNode *FileSystem::get_root() const
 {
     return root_;
 }
 
-void FileSystem::traverse(
-    FileNode* start_node,
-    const NodeVisitor& visitor) const
+void FileSystem::traverse(FileNode *start_node, const NodeVisitor &visitor) const
 {
-    if (start_node == nullptr || !owns_active_node(start_node) || !visitor)
-    {
+    if (start_node == nullptr || !owns_active_node(start_node) || !visitor) {
         return;
     }
 
     traverse_recursive(start_node, visitor);
 }
 
-bool FileSystem::is_in_recycle_bin(FileNode* node) const
+bool FileSystem::is_in_recycle_bin(FileNode *node) const
 {
     return find_recycle_entry(node) != nullptr;
 }
 
-std::string FileSystem::get_recycle_original_path(FileNode* node) const
+std::string FileSystem::get_recycle_original_path(FileNode *node) const
 {
-    const RecycleEntry* entry = find_recycle_entry(node);
+    const RecycleEntry *entry = find_recycle_entry(node);
     return entry == nullptr ? std::string() : entry->original_path;
 }
 
@@ -586,36 +496,30 @@ std::size_t FileSystem::get_recycle_count() const
     return recycle_count_;
 }
 
-void FileSystem::for_each_recycle_item(const RecycleVisitor& visitor) const
+void FileSystem::for_each_recycle_item(const RecycleVisitor &visitor) const
 {
-    if (!visitor)
-    {
+    if (!visitor) {
         return;
     }
 
-    const RecycleEntry* entry = recycle_head_;
-    while (entry != nullptr)
-    {
+    const RecycleEntry *entry = recycle_head_;
+    while (entry != nullptr) {
         visitor(entry->node, entry->original_path);
         entry = entry->next;
     }
 }
 
-bool FileSystem::has_name_conflict(
-    FileNode* parent,
-    const std::string& name,
-    FileNode* ignore_node) const
+bool FileSystem::has_name_conflict(FileNode *parent,
+                                   const std::string &name,
+                                   FileNode *ignore_node) const
 {
-    if (parent == nullptr || !owns_active_node(parent) || !parent->is_directory_)
-    {
+    if (parent == nullptr || !owns_active_node(parent) || !parent->is_directory_) {
         return true;
     }
 
-    FileNode* current = parent->first_child_;
-    while (current != nullptr)
-    {
-        if (current != ignore_node && current->name_ == name)
-        {
+    FileNode *current = parent->first_child_;
+    while (current != nullptr) {
+        if (current != ignore_node && current->name_ == name) {
             return true;
         }
         current = current->next_sibling_;
@@ -624,21 +528,14 @@ bool FileSystem::has_name_conflict(
     return false;
 }
 
-bool FileSystem::can_move(
-    FileNode* node,
-    FileNode* target_parent) const
+bool FileSystem::can_move(FileNode *node, FileNode *target_parent) const
 {
-    if (node == nullptr || target_parent == nullptr ||
-        node == root_ ||
-        !owns_active_node(node) ||
-        !owns_active_node(target_parent) ||
-        !target_parent->is_directory_)
-    {
+    if (node == nullptr || target_parent == nullptr || node == root_ || !owns_active_node(node)
+        || !owns_active_node(target_parent) || !target_parent->is_directory_) {
         return false;
     }
 
-    if (node == target_parent || is_descendant(target_parent, node))
-    {
+    if (node == target_parent || is_descendant(target_parent, node)) {
         return false;
     }
 
@@ -650,21 +547,17 @@ FileSystemError FileSystem::get_last_error() const
     return last_error_;
 }
 
-bool FileSystem::is_valid_name(const std::string& name)
+bool FileSystem::is_valid_name(const std::string &name)
 {
-    return !name.empty() &&
-           name != "." &&
-           name != ".." &&
-           !contains_forbidden_name_character(name);
+    return !name.empty() && name != "." && name != ".." && !contains_forbidden_name_character(name);
 }
 
 std::string FileSystem::now_string()
 {
     const std::time_t current_time = std::time(nullptr);
-    const std::tm* local_time = std::localtime(&current_time);
+    const std::tm *local_time = std::localtime(&current_time);
 
-    if (local_time == nullptr)
-    {
+    if (local_time == nullptr) {
         return std::string();
     }
 
@@ -678,41 +571,33 @@ void FileSystem::set_error(FileSystemError error)
     last_error_ = error;
 }
 
-bool FileSystem::owns_active_node(FileNode* node) const
+bool FileSystem::owns_active_node(FileNode *node) const
 {
-    if (node == nullptr)
-    {
+    if (node == nullptr) {
         return false;
     }
 
-    if (node == root_)
-    {
+    if (node == root_) {
         return true;
     }
 
-    FileNode* current = node;
-    while (current != nullptr && current != root_)
-    {
+    FileNode *current = node;
+    while (current != nullptr && current != root_) {
         current = current->parent_;
     }
 
     return current == root_;
 }
 
-bool FileSystem::is_descendant(
-    FileNode* node,
-    FileNode* possible_ancestor) const
+bool FileSystem::is_descendant(FileNode *node, FileNode *possible_ancestor) const
 {
-    if (node == nullptr || possible_ancestor == nullptr)
-    {
+    if (node == nullptr || possible_ancestor == nullptr) {
         return false;
     }
 
-    FileNode* current = node->parent_;
-    while (current != nullptr)
-    {
-        if (current == possible_ancestor)
-        {
+    FileNode *current = node->parent_;
+    while (current != nullptr) {
+        if (current == possible_ancestor) {
             return true;
         }
         current = current->parent_;
@@ -721,28 +606,23 @@ bool FileSystem::is_descendant(
     return false;
 }
 
-void FileSystem::append_child(
-    FileNode* parent,
-    FileNode* node)
+void FileSystem::append_child(FileNode *parent, FileNode *node)
 {
-    if (parent == nullptr || node == nullptr)
-    {
+    if (parent == nullptr || node == nullptr) {
         return;
     }
 
     node->parent_ = parent;
     node->next_sibling_ = nullptr;
 
-    if (parent->first_child_ == nullptr)
-    {
+    if (parent->first_child_ == nullptr) {
         parent->first_child_ = node;
         parent->modified_time_ = now_string();
         return;
     }
 
-    FileNode* current = parent->first_child_;
-    while (current->next_sibling_ != nullptr)
-    {
+    FileNode *current = parent->first_child_;
+    while (current->next_sibling_ != nullptr) {
         current = current->next_sibling_;
     }
 
@@ -750,17 +630,15 @@ void FileSystem::append_child(
     parent->modified_time_ = now_string();
 }
 
-bool FileSystem::detach_node(FileNode* node)
+bool FileSystem::detach_node(FileNode *node)
 {
-    if (node == nullptr || node->parent_ == nullptr)
-    {
+    if (node == nullptr || node->parent_ == nullptr) {
         return false;
     }
 
-    FileNode* parent = node->parent_;
+    FileNode *parent = node->parent_;
 
-    if (parent->first_child_ == node)
-    {
+    if (parent->first_child_ == node) {
         parent->first_child_ = node->next_sibling_;
         node->next_sibling_ = nullptr;
         node->parent_ = nullptr;
@@ -768,14 +646,12 @@ bool FileSystem::detach_node(FileNode* node)
         return true;
     }
 
-    FileNode* previous = parent->first_child_;
-    while (previous != nullptr && previous->next_sibling_ != node)
-    {
+    FileNode *previous = parent->first_child_;
+    while (previous != nullptr && previous->next_sibling_ != node) {
         previous = previous->next_sibling_;
     }
 
-    if (previous == nullptr)
-    {
+    if (previous == nullptr) {
         return false;
     }
 
@@ -786,11 +662,9 @@ bool FileSystem::detach_node(FileNode* node)
     return true;
 }
 
-FileNode* FileSystem::clone_subtree(
-    FileNode* source,
-    FileNode* new_parent)
+FileNode *FileSystem::clone_subtree(FileNode *source, FileNode *new_parent)
 {
-    FileNode* copy = new FileNode(source->name_, source->is_directory_);
+    FileNode *copy = new FileNode(source->name_, source->is_directory_);
     const std::string current_time = now_string();
 
     copy->created_time_ = current_time;
@@ -800,9 +674,8 @@ FileNode* FileSystem::clone_subtree(
 
     append_child(new_parent, copy);
 
-    FileNode* child = source->first_child_;
-    while (child != nullptr)
-    {
+    FileNode *child = source->first_child_;
+    while (child != nullptr) {
         clone_subtree(child, copy);
         child = child->next_sibling_;
     }
@@ -810,17 +683,15 @@ FileNode* FileSystem::clone_subtree(
     return copy;
 }
 
-void FileSystem::destroy_subtree(FileNode* node)
+void FileSystem::destroy_subtree(FileNode *node)
 {
-    if (node == nullptr)
-    {
+    if (node == nullptr) {
         return;
     }
 
-    FileNode* child = node->first_child_;
-    while (child != nullptr)
-    {
-        FileNode* next = child->next_sibling_;
+    FileNode *child = node->first_child_;
+    while (child != nullptr) {
+        FileNode *next = child->next_sibling_;
         destroy_subtree(child);
         child = next;
     }
@@ -828,13 +699,11 @@ void FileSystem::destroy_subtree(FileNode* node)
     delete node;
 }
 
-FileSystem::RecycleEntry* FileSystem::find_recycle_entry(FileNode* node) const
+FileSystem::RecycleEntry *FileSystem::find_recycle_entry(FileNode *node) const
 {
-    RecycleEntry* entry = recycle_head_;
-    while (entry != nullptr)
-    {
-        if (entry->node == node)
-        {
+    RecycleEntry *entry = recycle_head_;
+    while (entry != nullptr) {
+        if (entry->node == node) {
             return entry;
         }
         entry = entry->next;
@@ -843,29 +712,25 @@ FileSystem::RecycleEntry* FileSystem::find_recycle_entry(FileNode* node) const
     return nullptr;
 }
 
-void FileSystem::remove_recycle_entry(RecycleEntry* entry)
+void FileSystem::remove_recycle_entry(RecycleEntry *entry)
 {
-    if (entry == nullptr)
-    {
+    if (entry == nullptr) {
         return;
     }
 
-    if (recycle_head_ == entry)
-    {
+    if (recycle_head_ == entry) {
         recycle_head_ = entry->next;
         delete entry;
         --recycle_count_;
         return;
     }
 
-    RecycleEntry* previous = recycle_head_;
-    while (previous != nullptr && previous->next != entry)
-    {
+    RecycleEntry *previous = recycle_head_;
+    while (previous != nullptr && previous->next != entry) {
         previous = previous->next;
     }
 
-    if (previous == nullptr)
-    {
+    if (previous == nullptr) {
         return;
     }
 
@@ -874,21 +739,17 @@ void FileSystem::remove_recycle_entry(RecycleEntry* entry)
     --recycle_count_;
 }
 
-void FileSystem::traverse_recursive(
-    FileNode* node,
-    const NodeVisitor& visitor) const
+void FileSystem::traverse_recursive(FileNode *node, const NodeVisitor &visitor) const
 {
-    if (node == nullptr)
-    {
+    if (node == nullptr) {
         return;
     }
 
     visitor(node);
 
-    FileNode* child = node->first_child_;
-    while (child != nullptr)
-    {
-        FileNode* next = child->next_sibling_;
+    FileNode *child = node->first_child_;
+    while (child != nullptr) {
+        FileNode *next = child->next_sibling_;
         traverse_recursive(child, visitor);
         child = next;
     }
