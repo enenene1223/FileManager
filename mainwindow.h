@@ -43,11 +43,26 @@ private slots:
 
     void on_list_files_itemDoubleClicked(QListWidgetItem *item);
 
+    void on_list_files_itemChanged(QListWidgetItem *item);
+
+    void on_list_files_itemPressed(QListWidgetItem *item);
+
     void on_tree_dir_itemClicked(QTreeWidgetItem *item, int column);
 
 
 
+
+    void on_btn_copy_clicked();
+
+    void on_btn_move_clicked();
+
+    void on_btn_paste_clicked();
+
+    void on_btn_refresh_clicked();
+
+
 private:
+
     Ui::MainWindow *ui;
 
     FileSystem *file_system;    // 底层文件系统核心
@@ -67,5 +82,19 @@ private:
 
     void refresh_tree();       // 刷新左侧目录树
     void refresh_file_list();  // 刷新右侧文件列表
+
+    QListWidgetItem *last_clicked_item = nullptr;   //双击重命名
+    qint64 last_click_time = 0;
+
+    enum class ClipboardMode
+    {
+        None,
+        Copy,
+        Move
+    };
+
+    FileNode *clipboard_node = nullptr;
+    ClipboardMode clipboard_mode = ClipboardMode::None;
+
 };
 #endif // MAINWINDOW_H

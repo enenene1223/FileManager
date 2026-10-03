@@ -5,6 +5,17 @@
 #include <QMessageBox>
 #include <QListWidgetItem>
 
+#include <QMenu>
+#include <QAction>
+
+#include <QSignalBlocker>
+#include <QTimer>
+#include <QAbstractItemView>
+
+#include <QDateTime>
+#include <QApplication>
+#include <qtoolbutton.h>
+
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -12,13 +23,40 @@ MainWindow::MainWindow(QWidget *parent)
 {
     ui->setupUi(this);
 
-    // 1. 初始化底层系统
+    // 关闭 QListWidget 默认的双击编辑，
+    // 只允许我们在“新建”完成后主动进入重命名状态
+    ui->list_files->setEditTriggers(QAbstractItemView::NoEditTriggers);
+
+    // 初始化底层系统
     file_system = new FileSystem();
     current_dir_node = file_system->get_root(); // 根节点
 
-    // 2. 刷新界面
+    // 刷新界面
     refresh_tree();
     refresh_file_list();
+
+    // 新建的下拉菜单
+    QMenu *newMenu = new QMenu(this);
+
+    QAction *newFileAction =
+        newMenu->addAction("新建文件");
+
+    QAction *newFolderAction =
+        newMenu->addAction("新建文件夹");
+
+    ui->btn_new->setMenu(newMenu);
+    ui->btn_new->setPopupMode(QToolButton::InstantPopup);
+
+    connect(newFileAction,
+            &QAction::triggered,
+            this,
+            &MainWindow::on_btn_new_file_clicked);
+
+    connect(newFolderAction,
+            &QAction::triggered,
+            this,
+            &MainWindow::on_btn_new_folder_clicked);
+
 }
 
 MainWindow::~MainWindow()
@@ -28,7 +66,12 @@ MainWindow::~MainWindow()
 }
 
 void MainWindow::refresh_file_list() {
+    // 刷新列表时禁止触发 itemChanged，
+    // 防止 setText / clear 等操作误触发重命名逻辑
+    QSignalBlocker blocker(ui->list_files);
+
     ui->list_files->clear();
+
     if (current_dir_node == nullptr) return;
 
     // 1. 改用 getter 方法获取第一个子节点
@@ -36,11 +79,22 @@ void MainWindow::refresh_file_list() {
 
     while (child != nullptr) {
         // 2. 改用 get_name() 获取名字，它返回的是 const std::string&，可以无缝转换
-        QString nameStr = QString::fromStdString(child->get_name());
-        QListWidgetItem *item = new QListWidgetItem(nameStr);
+        QString nameStr =
+            QString::fromStdString(child->get_name());
+        QListWidgetItem *item =
+            new QListWidgetItem(nameStr);
 
         // 把节点指针存进 item，方便以后点击时用
-        item->setData(Qt::UserRole, QVariant::fromValue(child));
+        item->setData(
+            Qt::UserRole,
+            QVariant::fromValue(child)
+        );
+
+        // 允许这个 Item 被程序调用 editItem() 编辑
+        item->setFlags(
+            item->flags() | Qt::ItemIsEditable
+            );
+
         ui->list_files->addItem(item);
 
         // 3. 改用 get_next_sibling() 获取下一个兄弟节点
@@ -90,28 +144,131 @@ void MainWindow::refresh_tree() {
 
 void MainWindow::on_btn_new_folder_clicked()
 {
+    QString name = "新建文件夹";
 
-        // 1. 弹出输入框，让用户输入名字
-        bool ok;
-        QString name = QInputDialog::getText(this, "新建文件夹", "请输入文件夹名：", QLineEdit::Normal, "", &ok);
+    // 如果存在同名文件夹，则自动生成：
+    // 新建文件夹 (2)
+    // 新建文件夹 (3)
+    // ...
+    int index = 2;
 
-        // 2. 如果用户点了确定，且名字不为空
-        if (ok && !name.isEmpty()) {
-            // 3. 调用底层接口！
-            FileNode* newNode = file_system->create_folder(current_dir_node, name.toStdString());
+    while (file_system->find_child(
+               current_dir_node,
+               name.toStdString()) != nullptr)
+    {
+        name = QString("新建文件夹 (%1)").arg(index);
+        ++index;
+    }
 
-            // 4. 判断结果
-            if (newNode != nullptr) {
-                refresh_file_list(); // 成功，刷新右侧列表
-                refresh_tree();      // 刷新左侧目录树
-                QMessageBox::information(this, "成功", "文件夹创建成功！");
-            } else {
-                QMessageBox::warning(this, "失败", "创建失败，可能存在重名或非法字符！");
-            }
+    // 直接创建
+    FileNode* newNode =
+        file_system->create_folder(
+            current_dir_node,
+            name.toStdString()
+            );
+
+    if (newNode == nullptr) {
+        QMessageBox::warning(
+            this,
+            "失败",
+            "创建文件夹失败！"
+            );
+        return;
+    }
+
+    // 刷新界面
+    refresh_file_list();
+    refresh_tree();
+
+    // 找到刚刚创建的节点
+    QListWidgetItem* newItem = nullptr;
+
+    for (int i = 0; i < ui->list_files->count(); ++i) {
+        QListWidgetItem* item = ui->list_files->item(i);
+
+        FileNode* node =
+            item->data(Qt::UserRole).value<FileNode*>();
+
+        if (node == newNode) {
+            newItem = item;
+            break;
         }
+    }
 
+    if (newItem != nullptr) {
+        QTimer::singleShot(0, this, [this, newItem]() {
+            ui->list_files->setCurrentItem(newItem);
+            ui->list_files->editItem(newItem);
+        });
+    }
 }
 
+
+
+void MainWindow::on_btn_new_file_clicked()
+{
+    // 默认名称
+    QString name = "新建文件.txt";
+
+    // 如果已经存在同名文件，则自动生成：
+    // 新建文件 (2).txt
+    // 新建文件 (3).txt
+    // ...
+    int index = 2;
+
+    while (file_system->find_child(
+               current_dir_node,
+               name.toStdString()) != nullptr)
+    {
+        name = QString("新建文件 (%1).txt").arg(index);
+        ++index;
+    }
+
+    // 直接创建，不再弹输入框
+    FileNode* newNode =
+        file_system->create_file(
+            current_dir_node,
+            name.toStdString(),
+            ""
+            );
+
+    if (newNode == nullptr) {
+        QMessageBox::warning(
+            this,
+            "失败",
+            "创建文件失败！"
+            );
+        return;
+    }
+
+    // 刷新界面
+    refresh_file_list();
+    refresh_tree();
+
+    // 在刷新后的列表中找到刚刚创建的节点
+    QListWidgetItem* newItem = nullptr;
+
+    for (int i = 0; i < ui->list_files->count(); ++i) {
+        QListWidgetItem* item = ui->list_files->item(i);
+
+        FileNode* node =
+            item->data(Qt::UserRole).value<FileNode*>();
+
+        if (node == newNode) {
+            newItem = item;
+            break;
+        }
+    }
+
+    if (newItem != nullptr) {
+        // 下一轮事件循环中进入编辑状态
+        // 这样视觉上更接近 Windows 的新建效果
+        QTimer::singleShot(0, this, [this, newItem]() {
+            ui->list_files->setCurrentItem(newItem);
+            ui->list_files->editItem(newItem);
+        });
+    }
+}
 
 
 void MainWindow::on_btn_delete_clicked()
@@ -142,32 +299,8 @@ void MainWindow::on_btn_delete_clicked()
             if (success) {
                 refresh_file_list();
                 refresh_tree();
-                QMessageBox::information(this, "成功", "已移入回收站！");
             } else {
                 QMessageBox::warning(this, "失败", "删除失败！可能是根目录不可删除。");
-            }
-        }
-
-}
-
-
-void MainWindow::on_btn_new_file_clicked()
-{
-
-        bool ok;
-        // 弹出输入框，默认文件名给个提示
-        QString name = QInputDialog::getText(this, "新建文件", "请输入文件名：", QLineEdit::Normal, "新建文件.txt", &ok);
-
-        if (ok && !name.isEmpty()) {
-            // 调用底层接口，第三个参数是模拟文件的大小，我们随便传个 0 或 1024
-            FileNode* newNode = file_system->create_file(current_dir_node, name.toStdString(), "");
-
-            if (newNode != nullptr) {
-                refresh_file_list(); // 刷新右侧列表
-                refresh_tree();      // 刷新左侧目录树
-                QMessageBox::information(this, "成功", "文件创建成功！");
-            } else {
-                QMessageBox::warning(this, "失败", "创建失败！可能存在重名或包含了非法字符(/、|)。");
             }
         }
 
@@ -200,12 +333,205 @@ void MainWindow::on_btn_rename_clicked()
             if (success) {
                 refresh_file_list();
                 refresh_tree();
-                QMessageBox::information(this, "成功", "重命名成功！");
             } else {
                 QMessageBox::warning(this, "失败", "重命名失败！可能存在重名或非法字符。");
             }
         }
 
+}
+
+
+void MainWindow::on_list_files_itemChanged(QListWidgetItem *item)
+{
+    if (item == nullptr)
+        return;
+
+    // 取出对应的 FileNode
+    FileNode* node =
+        item->data(Qt::UserRole).value<FileNode*>();
+
+    if (node == nullptr)
+        return;
+
+    QString newName = item->text();
+
+    QString oldName =
+        QString::fromStdString(node->get_name());
+
+    // 名称没有改变，不需要处理
+    if (newName == oldName)
+        return;
+
+    // 不能为空
+    if (newName.trimmed().isEmpty()) {
+        QSignalBlocker blocker(ui->list_files);
+        item->setText(oldName);
+
+        QMessageBox::warning(
+            this,
+            "重命名失败",
+            "文件名不能为空！"
+            );
+
+        return;
+    }
+
+    // 调用已有核心接口
+    bool success =
+        file_system->rename_node(
+            node,
+            newName.toStdString()
+            );
+
+    if (!success) {
+        // 核心拒绝重命名，例如：
+        // 同目录重名
+        // 非法字符
+        QSignalBlocker blocker(ui->list_files);
+
+        item->setText(oldName);
+
+        QMessageBox::warning(
+            this,
+            "重命名失败",
+            "名称非法或当前目录已经存在同名文件/文件夹。"
+            );
+
+        return;
+    }
+
+    // 重命名成功后刷新界面
+    refresh_file_list();
+    refresh_tree();
+
+    // 如果改的是当前目录或者其他可能影响路径显示的节点，
+    // 同步刷新当前路径栏
+    ui->lineEdit_path->setText(
+        QString::fromStdString(
+            file_system->get_path(current_dir_node)
+            )
+        );
+}
+
+
+void MainWindow::on_list_files_itemPressed(QListWidgetItem *item)
+{
+    if (item == nullptr)
+        return;
+
+    qint64 current_time =
+        QDateTime::currentMSecsSinceEpoch();
+
+    // 如果是同一个项目，并且距离上一次点击
+    // 已经超过双击时间间隔，认为是“再次点击重命名”
+    if (last_clicked_item == item &&
+        current_time - last_click_time > QApplication::doubleClickInterval())
+    {
+        ui->list_files->editItem(item);
+
+        // 重置，避免连续误触发
+        last_clicked_item = nullptr;
+        last_click_time = 0;
+        return;
+    }
+
+    // 第一次点击，或者点击了其他项目
+    last_clicked_item = item;
+    last_click_time = current_time;
+}
+
+
+
+void MainWindow::on_btn_copy_clicked()
+{
+    QListWidgetItem *item = ui->list_files->currentItem();
+
+    if (item == nullptr)
+        return;
+
+    FileNode *node =
+        item->data(Qt::UserRole).value<FileNode *>();
+
+    if (node == nullptr)
+        return;
+
+    clipboard_node = node;
+    clipboard_mode = ClipboardMode::Copy;
+}
+
+
+void MainWindow::on_btn_move_clicked()
+{
+    QListWidgetItem *item = ui->list_files->currentItem();
+
+    if (item == nullptr)
+        return;
+
+    FileNode *node =
+        item->data(Qt::UserRole).value<FileNode *>();
+
+    if (node == nullptr)
+        return;
+
+    clipboard_node = node;
+    clipboard_mode = ClipboardMode::Move;
+}
+
+
+void MainWindow::on_btn_paste_clicked()
+{
+    if (clipboard_node == nullptr)
+        return;
+
+    if (clipboard_mode == ClipboardMode::Copy)
+    {
+        FileNode *new_node =
+            file_system->copy_node(
+                clipboard_node,
+                current_dir_node
+                );
+
+        if (new_node == nullptr)
+        {
+            QMessageBox::warning(
+                this,
+                "粘贴失败",
+                "复制文件或文件夹失败！"
+                );
+            return;
+        }
+
+        refresh_tree();
+        refresh_file_list();
+
+        // 复制模式下，剪贴板继续保留
+        // 可以继续粘贴到其他目录
+    }
+    else if (clipboard_mode == ClipboardMode::Move)
+    {
+        bool success =
+            file_system->move_node(
+                clipboard_node,
+                current_dir_node
+                );
+
+        if (!success)
+        {
+            QMessageBox::warning(
+                this,
+                "粘贴失败",
+                "移动文件或文件夹失败！"
+                );
+            return;
+        }
+
+        refresh_tree();
+        refresh_file_list();
+
+        // 移动成功以后清空剪贴板
+        clipboard_node = nullptr;
+        clipboard_mode = ClipboardMode::None;
+    }
 }
 
 
@@ -380,6 +706,10 @@ void MainWindow::on_tree_dir_itemClicked(QTreeWidgetItem *item, int column)
 
 }
 
-
+void MainWindow::on_btn_refresh_clicked()
+{
+    refresh_tree();
+    refresh_file_list();
+}
 
 

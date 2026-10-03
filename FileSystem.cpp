@@ -667,8 +667,10 @@ FileNode *FileSystem::clone_subtree(FileNode *source, FileNode *new_parent)
     FileNode *copy = new FileNode(source->name_, source->is_directory_);
     const std::string current_time = now_string();
 
+    // 复制语义：创建时间使用本次复制发生的时刻；
+    // 修改时间沿用源节点，表示复制的是同一份已有内容/状态。
     copy->created_time_ = current_time;
-    copy->modified_time_ = current_time;
+    copy->modified_time_ = source->modified_time_;
     copy->size_ = source->size_;
     copy->content_ = source->content_;
 

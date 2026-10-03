@@ -19,6 +19,9 @@
      <layout class="QHBoxLayout" name="horizontalLayout_2">
       <item>
        <widget class="QPushButton" name="btn_back">
+        <property name="enabled">
+         <bool>true</bool>
+        </property>
         <property name="text">
          <string>←</string>
         </property>
@@ -34,12 +37,22 @@
       <item>
        <widget class="QPushButton" name="btn_up">
         <property name="text">
-         <string>上一级</string>
+         <string>↑</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="btn_refresh">
+        <property name="text">
+         <string>⟳</string>
         </property>
        </widget>
       </item>
       <item>
        <widget class="QLineEdit" name="lineEdit_path"/>
+      </item>
+      <item>
+       <widget class="QLineEdit" name="lineEdit_search"/>
       </item>
       <item>
        <widget class="QPushButton" name="btn_search">
@@ -48,31 +61,45 @@
         </property>
        </widget>
       </item>
-      <item>
-       <widget class="QLineEdit" name="lineEdit_search"/>
-      </item>
      </layout>
     </item>
     <item>
      <layout class="QHBoxLayout" name="horizontalLayout">
       <item>
+       <widget class="QToolButton" name="btn_new">
+        <property name="text">
+         <string>新建</string>
+        </property>
+        <property name="popupMode">
+         <enum>QToolButton::ToolButtonPopupMode::InstantPopup</enum>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="btn_move">
+        <property name="text">
+         <string>移动</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="btn_copy">
+        <property name="text">
+         <string>复制</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="btn_paste">
+        <property name="text">
+         <string>粘贴</string>
+        </property>
+       </widget>
+      </item>
+      <item>
        <widget class="QPushButton" name="btn_rename">
         <property name="text">
          <string>重命名</string>
-        </property>
-       </widget>
-      </item>
-      <item>
-       <widget class="QPushButton" name="btn_new_folder">
-        <property name="text">
-         <string>新建文件夹</string>
-        </property>
-       </widget>
-      </item>
-      <item>
-       <widget class="QPushButton" name="btn_new_file">
-        <property name="text">
-         <string>新建文件</string>
         </property>
        </widget>
       </item>
@@ -109,7 +136,7 @@
      <x>0</x>
      <y>0</y>
      <width>800</width>
-     <height>18</height>
+     <height>22</height>
     </rect>
    </property>
   </widget>

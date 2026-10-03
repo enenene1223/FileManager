@@ -94,6 +94,18 @@ set_metadata(node, size, created_time, modified_time);
 
 `size < 0` 会失败。
 
+## 7.1 复制语义
+
+`copy_node()` 创建与源节点完全独立的新节点；复制文件夹时递归复制整棵子树。
+
+时间属性统一约定：
+
+- `created_time` 使用复制发生的当前时间；
+- `modified_time` 继承源节点的修改时间；
+- `size` 与普通文件的 `content` 从源节点复制。
+
+源节点及其原有子树不得因为复制而发生变化。
+
 ## 8. 深度优先遍历
 
 `traverse(start, visitor)` 使用 DFS，包含起始节点。
