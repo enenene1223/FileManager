@@ -45,9 +45,7 @@ private slots:
 
     void on_tree_dir_itemClicked(QTreeWidgetItem *item, int column);
 
-    void on_btn_copy_clicked();
 
-    void on_btn_move_clicked();
 
 private:
     Ui::MainWindow *ui;

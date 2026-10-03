@@ -83,20 +83,6 @@
         </property>
        </widget>
       </item>
-      <item>
-       <widget class="QPushButton" name="btn_copy">
-        <property name="text">
-         <string>复制到</string>
-        </property>
-       </widget>
-      </item>
-      <item>
-       <widget class="QPushButton" name="btn_move">
-        <property name="text">
-         <string>移动到</string>
-        </property>
-       </widget>
-      </item>
      </layout>
     </item>
     <item>
