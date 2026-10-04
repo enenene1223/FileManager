@@ -16,6 +16,11 @@
 #include <QApplication>
 #include <qtoolbutton.h>
 
+#include <fstream>
+#include <string>
+#include <sstream>
+#include <QCloseEvent>
+
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -30,6 +35,9 @@ MainWindow::MainWindow(QWidget *parent)
     // 初始化底层系统
     file_system = new FileSystem();
     current_dir_node = file_system->get_root(); // 根节点
+
+    //自动加载上一次保存的数据
+    load_data();
 
     // 刷新界面
     refresh_tree();
@@ -634,6 +642,17 @@ void MainWindow::navigate_to(const std::string& path) {
         ui->lineEdit_path->setText(QString::fromStdString(file_system->get_path(current_dir_node)));
         ui->statusbar->showMessage("历史路径不存在或已被删除！", 2000);
     }
+
+    if (target != nullptr && target->is_directory()) {
+        // ... 更新界面 ...
+
+        // 记录历史记录
+        QString currentPath = QString::fromStdString(path);
+        history_list.removeAll(currentPath); // 去重
+        history_list.prepend(currentPath);   // 放到最前面
+        if (history_list.size() > 20) history_list.removeLast(); // 限制最多20条
+    }
+
 }
 
 // 递归搜索（DFS）
@@ -699,6 +718,11 @@ void MainWindow::on_tree_dir_itemClicked(QTreeWidgetItem *item, int column)
             back_stack.push(file_system->get_path(current_dir_node));
             while (!forward_stack.empty()) forward_stack.pop();
 
+            QString currentPath = QString::fromStdString(file_system->get_path(clickedNode));
+            history_list.removeAll(currentPath);
+            history_list.prepend(currentPath);
+            if (history_list.size() > 20) history_list.removeLast();
+
             current_dir_node = clickedNode;
             refresh_file_list();
             ui->lineEdit_path->setText(QString::fromStdString(file_system->get_path(current_dir_node)));
@@ -706,10 +730,114 @@ void MainWindow::on_tree_dir_itemClicked(QTreeWidgetItem *item, int column)
 
 }
 
-
 void MainWindow::on_btn_refresh_clicked()
 {
     refresh_tree();
     refresh_file_list();
 }
 
+
+
+void MainWindow::on_btn_history_clicked()
+{
+
+        if (history_list.isEmpty()) {
+            QMessageBox::information(this, "历史记录", "暂无历史记录！");
+            return;
+        }
+        QString listStr = history_list.join("\n"); // 转换成多行文本
+        QMessageBox::information(this, "历史记录", "最近访问路径：\n" + listStr);
+
+}
+
+
+
+// 递归保存辅助函数
+void MainWindow::save_node_recursive(FileNode* node, std::ofstream& out) {
+    if (node == nullptr) return;
+
+    // 1. 获取当前节点的路径（底层接口）
+    std::string path = file_system->get_path(node);
+
+    // 2. 按格式写入： D或F | 路径 | 创建时间 | 修改时间
+    out << (node->is_directory() ? "D" : "F") << "|"
+        << path << "|"
+        << node->get_created_time() << "|"
+        << node->get_modified_time() << "\n";
+
+    // 3. 递归遍历子节点
+    FileNode* child = node->get_first_child();
+    while (child != nullptr) {
+        save_node_recursive(child, out);
+        child = child->get_next_sibling();
+    }
+}
+
+// 先定义真正的保存函数
+void MainWindow::save_data() {
+    std::ofstream out("data.txt");
+    if (!out.is_open()) {
+        QMessageBox::warning(this, "错误", "无法创建保存文件！");
+        return;
+    }
+    save_node_recursive(file_system->get_root(), out);
+    out.close();
+    ui->statusbar->showMessage("数据保存成功！", 2000);
+}
+
+// 按钮点击时，直接调用它
+void MainWindow::on_btn_save_clicked() {
+    save_data();
+}
+
+
+
+void MainWindow::load_data() {
+    std::ifstream in("data.txt");
+    if (!in.is_open()) return; // 第一次运行没有文件，直接返回，正常
+
+    std::string line;
+    while (std::getline(in, line)) {
+        if (line.empty()) continue;
+
+        // 1. 按照 '|' 分割字符串
+        std::stringstream ss(line);
+        std::string type, path, c_time, m_time;
+        std::getline(ss, type, '|');
+        std::getline(ss, path, '|');
+        std::getline(ss, c_time, '|');
+        std::getline(ss, m_time, '|');
+
+        // 2. 跳过根节点（因为 FileSystem 构造函数已经创建了根节点）
+        if (path == "/" || path.empty()) continue;
+
+        // 3. 找到父路径 (例如 /学习/C++ 的父路径是 /学习)
+        size_t lastSlash = path.find_last_of('/');
+        if (lastSlash == std::string::npos) continue;
+        std::string parentPath = path.substr(0, lastSlash);
+        if (parentPath.empty()) parentPath = "/"; // 容错处理
+
+        std::string name = path.substr(lastSlash + 1);
+
+        // 4. 找到父节点并创建当前节点
+        FileNode* parentNode = file_system->find_by_path(parentPath);
+        if (parentNode == nullptr) continue; // 父节点没找到，跳过（容错）
+
+        if (type == "D") {
+            file_system->create_folder(parentNode, name);
+        } else {
+            file_system->create_file(parentNode, name, ""); // 内容为空，因为只模拟文件信息
+        }
+    }
+    in.close();
+
+    // 5. 加载完成后，刷新界面
+    refresh_tree();
+    refresh_file_list();
+    ui->lineEdit_path->setText(QString::fromStdString(file_system->get_path(current_dir_node)));
+}
+
+void MainWindow::closeEvent(QCloseEvent *event) {
+    save_data(); // 窗口关闭时，偷偷执行一次保存
+    event->accept(); // 接受关闭事件
+}
