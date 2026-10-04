@@ -64,7 +64,7 @@
      </layout>
     </item>
     <item>
-     <layout class="QHBoxLayout" name="horizontalLayout_3">
+     <layout class="QHBoxLayout" name="horizontalLayout">
       <item>
        <widget class="QToolButton" name="btn_new">
         <property name="text">
@@ -110,10 +110,24 @@
         </property>
        </widget>
       </item>
+      <item>
+       <widget class="QPushButton" name="btn_history">
+        <property name="text">
+         <string>历史记录</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="btn_save">
+        <property name="text">
+         <string>保存</string>
+        </property>
+       </widget>
+      </item>
      </layout>
     </item>
     <item>
-     <layout class="QHBoxLayout" name="horizontalLayout">
+     <layout class="QHBoxLayout" name="horizontalLayout_3">
       <item>
        <widget class="QTreeWidget" name="tree_dir">
         <column>
@@ -136,7 +150,7 @@
      <x>0</x>
      <y>0</y>
      <width>800</width>
-     <height>22</height>
+     <height>18</height>
     </rect>
    </property>
   </widget>

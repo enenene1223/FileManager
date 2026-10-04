@@ -2,6 +2,7 @@
 #define MAINWINDOW_H
 
 #include <QMainWindow>
+#include <QCloseEvent>
 #include "FileNode.h"
 #include "FileSystem.h"
 #include <stack>
@@ -9,6 +10,7 @@
 #include <QList>
 #include <QListWidgetItem>
 #include <QTreeWidgetItem>
+#include <QStringList>
 
 QT_BEGIN_NAMESPACE
 namespace Ui {
@@ -23,6 +25,9 @@ class MainWindow : public QMainWindow
 public:
     explicit MainWindow(QWidget *parent = nullptr);
     ~MainWindow() override;
+
+protected:
+    void closeEvent(QCloseEvent *event) override;
 
 private slots:
     void on_btn_new_folder_clicked();
@@ -49,6 +54,9 @@ private slots:
 
     void on_tree_dir_itemClicked(QTreeWidgetItem *item, int column);
 
+
+
+
     void on_btn_copy_clicked();
 
     void on_btn_move_clicked();
@@ -56,6 +64,16 @@ private slots:
     void on_btn_paste_clicked();
 
     void on_btn_refresh_clicked();
+
+
+    void on_btn_history_clicked();
+
+    void save_data(); // 保存数据
+    void save_node_recursive(FileNode* node, std::ofstream& out); // 递归辅助函数
+
+
+    void on_btn_save_clicked();
+    void load_data();
 
 private:
 
@@ -81,6 +99,8 @@ private:
 
     QListWidgetItem *last_clicked_item = nullptr;   //双击重命名
     qint64 last_click_time = 0;
+
+    QStringList history_list;//访问记录
 
     enum class ClipboardMode
     {
