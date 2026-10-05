@@ -54,9 +54,6 @@ private slots:
 
     void on_tree_dir_itemClicked(QTreeWidgetItem *item, int column);
 
-
-
-
     void on_btn_copy_clicked();
 
     void on_btn_move_clicked();
@@ -65,15 +62,13 @@ private slots:
 
     void on_btn_refresh_clicked();
 
-
-    void on_btn_history_clicked();
-
     void save_data(); // 保存数据
     void save_node_recursive(FileNode* node, std::ofstream& out); // 递归辅助函数
 
-
     void on_btn_save_clicked();
     void load_data();
+
+    void on_btn_test_pin_clicked();//临时测试置顶功能
 
 private:
 
@@ -81,8 +76,6 @@ private:
 
     FileSystem *file_system;    // 底层文件系统核心
     FileNode *current_dir_node; // 当前所在目录的节点指针
-
-
 
     // 导航用的两个栈
     std::stack<std::string> back_stack;
@@ -96,6 +89,9 @@ private:
 
     void refresh_tree();       // 刷新左侧目录树
     void refresh_file_list();  // 刷新右侧文件列表
+
+    void toggle_pin(FileNode* node);
+    bool is_pinned(FileNode* node) const;
 
     QListWidgetItem *last_clicked_item = nullptr;   //双击重命名
     qint64 last_click_time = 0;

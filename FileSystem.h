@@ -70,6 +70,10 @@ public:
 
     bool move_node(FileNode *node, FileNode *target_parent);
 
+    // 置顶
+    bool set_pinned(FileNode* node, bool pinned);
+    bool is_pinned(FileNode* node) const;
+
     // 递归深拷贝整个子树。
     FileNode *copy_node(FileNode *node, FileNode *target_parent);
 
@@ -203,6 +207,8 @@ private:
     void remove_recycle_entry(RecycleEntry *entry);
 
     void traverse_recursive(FileNode *node, const NodeVisitor &visitor) const;
+
+    long long next_pin_order_;
 };
 
 #endif // FILESYSTEM_H

@@ -18,8 +18,13 @@ public:
 
     // 只读访问接口。其他模块不要直接修改节点内部数据。
     const std::string &get_name() const;
+
     bool is_directory() const;
+    bool is_pinned() const;
+
     long long get_size() const;
+    long long get_pin_order() const;
+
     const std::string &get_created_time() const;
     const std::string &get_modified_time() const;
     const std::string &get_content() const;
@@ -30,8 +35,13 @@ public:
 
 private:
     std::string name_;
+
     bool is_directory_;
+    bool pinned_;
+
     long long size_;
+    long long pin_order_;
+
     std::string created_time_;
     std::string modified_time_;
     std::string content_;

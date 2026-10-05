@@ -3,6 +3,8 @@
 FileNode::FileNode(const std::string &name, bool is_directory)
     : name_(name)
     , is_directory_(is_directory)
+    , pinned_(false)
+    , pin_order_(-1)
     , size_(0)
     , created_time_()
     , modified_time_()
@@ -24,9 +26,19 @@ bool FileNode::is_directory() const
     return is_directory_;
 }
 
+bool FileNode::is_pinned() const
+{
+    return pinned_;
+}
+
 long long FileNode::get_size() const
 {
     return size_;
+}
+
+long long FileNode::get_pin_order() const
+{
+    return pin_order_;
 }
 
 const std::string &FileNode::get_created_time() const
