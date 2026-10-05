@@ -19,6 +19,7 @@ FileSystem::FileSystem()
     , recycle_head_(nullptr)
     , recycle_count_(0)
     , last_error_(FileSystemError::NONE)
+    , next_pin_order_(0)
 {
     const std::string current_time = now_string();
     root_->created_time_ = current_time;
@@ -756,3 +757,39 @@ void FileSystem::traverse_recursive(FileNode *node, const NodeVisitor &visitor) 
         child = next;
     }
 }
+
+
+bool FileSystem::set_pinned(FileNode* node, bool pinned)
+{
+    if (node == nullptr)
+    {
+        set_error(FileSystemError::INVALID_NODE);
+        return false;
+    }
+
+    // 置顶
+    if (pinned && !node->pinned_)
+    {
+        node->pinned_ = true;
+        node->pin_order_ = next_pin_order_++;
+    }
+    // 取消置顶
+    else if (!pinned && node->pinned_)
+    {
+        node->pinned_ = false;
+        node->pin_order_ = -1;
+    }
+
+    set_error(FileSystemError::NONE);
+    return true;
+}
+
+
+bool FileSystem::is_pinned(FileNode* node) const
+{
+    if (node == nullptr)
+        return false;
+
+    return node->pinned_;
+}
+

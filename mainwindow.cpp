@@ -21,12 +21,27 @@
 #include <sstream>
 #include <QCloseEvent>
 
+#include <algorithm>
+#include <QHeaderView>
+
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , ui(new Ui::MainWindow)
 {
     ui->setupUi(this);
+
+    // 左侧目录树使用两列：名称 + 置顶图标
+    ui->tree_dir->setColumnCount(2);
+
+    QHeaderView *header = ui->tree_dir->header();
+
+    header->setStretchLastSection(false);
+    header->setSectionResizeMode(0, QHeaderView::Stretch);
+    header->setSectionResizeMode(1, QHeaderView::Fixed);
+    header->resizeSection(1, 32);
+
+    ui->tree_dir->setHeaderHidden(true);
 
     // 关闭 QListWidget 默认的双击编辑，
     // 只允许我们在“新建”完成后主动进入重命名状态
@@ -124,7 +139,11 @@ void MainWindow::build_tree_item(FileNode* node, QTreeWidgetItem* parentItem) {
             item->setText(0, QString::fromStdString(child->get_name()));
 
             // 把底层的 FileNode 指针存进 QTreeWidgetItem 的 UserRole 里！
-            item->setData(0, Qt::UserRole, QVariant::fromValue(child));
+            item->setData(
+                0,
+                Qt::UserRole,
+                QVariant::fromValue(child)
+            );
 
             // 递归创建子节点
             build_tree_item(child, item);
@@ -136,17 +155,157 @@ void MainWindow::build_tree_item(FileNode* node, QTreeWidgetItem* parentItem) {
 
 
 
-void MainWindow::refresh_tree() {
+void MainWindow::refresh_tree()
+{
     ui->tree_dir->clear();
-    if (current_dir_node == nullptr) return;
 
-    // 从根节点开始构建树
-    QTreeWidgetItem* rootItem = new QTreeWidgetItem(ui->tree_dir);
+    if (current_dir_node == nullptr)
+        return;
+
+    // ==================================================
+    // 第一部分：回收站
+    // ==================================================
+    QTreeWidgetItem* recycleItem =
+        new QTreeWidgetItem(ui->tree_dir);
+
+    recycleItem->setText(0, "回收站");
+
+
+    // ==================================================
+    // 第二部分：真正的置顶项目
+    // 按置顶先后顺序排列：
+    // 先置顶的在上，后置顶的在下
+    // ==================================================
+    QList<FileNode*> pinnedNodes;
+
+    file_system->traverse(
+        file_system->get_root(),
+        [&pinnedNodes, this](FileNode* node)
+        {
+            if (node == file_system->get_root())
+                return;
+
+            if (file_system->is_pinned(node))
+            {
+                pinnedNodes.append(node);
+            }
+        }
+        );
+
+    std::sort(
+        pinnedNodes.begin(),
+        pinnedNodes.end(),
+        [](FileNode* a, FileNode* b)
+        {
+            return a->get_pin_order() <
+                   b->get_pin_order();
+        }
+        );
+
+    for (FileNode* node : pinnedNodes)
+    {
+        QTreeWidgetItem* item =
+            new QTreeWidgetItem(ui->tree_dir);
+
+        // 第一列：文件名
+        item->setText(
+            0,
+            QString::fromStdString(
+                node->get_name()
+                )
+            );
+
+        // 第二列：置顶符号
+        item->setText(1, "📌");
+
+        item->setTextAlignment(
+            1,
+            Qt::AlignRight | Qt::AlignVCenter
+            );
+
+        // 保存节点指针
+        item->setData(
+            0,
+            Qt::UserRole,
+            QVariant::fromValue(node)
+            );
+    }
+
+
+    // ==================================================
+    // 第三部分：最近访问
+    // history_list 内部仍然保存完整路径
+    // 左侧只显示最后一级
+    // ==================================================
+    for (const QString& path : history_list)
+    {
+        FileNode* node =
+            file_system->find_by_path(
+                path.toStdString()
+                );
+
+        if (node == nullptr ||
+            !node->is_directory())
+        {
+            continue;
+        }
+
+        // 已经置顶的项目不在最近访问中重复显示
+        if (file_system->is_pinned(node))
+            continue;
+
+        QTreeWidgetItem* item =
+            new QTreeWidgetItem(ui->tree_dir);
+
+        QString displayName = path;
+
+        int lastSlash =
+            displayName.lastIndexOf('/');
+
+        if (lastSlash >= 0)
+        {
+            displayName =
+                displayName.mid(lastSlash + 1);
+        }
+
+        // 根目录 "/" 的最后一级为空
+        if (displayName.isEmpty())
+        {
+            displayName = "我的电脑";
+        }
+
+        item->setText(0, displayName);
+
+        item->setData(
+            0,
+            Qt::UserRole,
+            QVariant::fromValue(node)
+            );
+    }
+
+
+    // ==================================================
+    // 第四部分：真实目录树
+    // ==================================================
+    QTreeWidgetItem* rootItem =
+        new QTreeWidgetItem(ui->tree_dir);
+
     rootItem->setText(0, "我的电脑");
-    rootItem->setData(0, Qt::UserRole, QVariant::fromValue(file_system->get_root()));
-    build_tree_item(file_system->get_root(), rootItem);
 
-    ui->tree_dir->expandAll(); // 默认展开全部
+    rootItem->setData(
+        0,
+        Qt::UserRole,
+        QVariant::fromValue(
+            file_system->get_root()
+            )
+        );
+
+    build_tree_item(
+        file_system->get_root(),
+        rootItem
+        );
+
+    rootItem->setExpanded(true);
 }
 
 
@@ -305,6 +464,8 @@ void MainWindow::on_btn_delete_clicked()
             bool success = file_system->delete_node(selectedNode);
 
             if (success) {
+                file_system->set_pinned(selectedNode, false);
+
                 refresh_file_list();
                 refresh_tree();
             } else {
@@ -737,22 +898,6 @@ void MainWindow::on_btn_refresh_clicked()
 }
 
 
-
-void MainWindow::on_btn_history_clicked()
-{
-
-        if (history_list.isEmpty()) {
-            QMessageBox::information(this, "历史记录", "暂无历史记录！");
-            return;
-        }
-        QString listStr = history_list.join("\n"); // 转换成多行文本
-        QMessageBox::information(this, "历史记录", "最近访问路径：\n" + listStr);
-
-}
-
-
-
-// 递归保存辅助函数
 void MainWindow::save_node_recursive(FileNode* node, std::ofstream& out) {
     if (node == nullptr) return;
 
@@ -773,7 +918,7 @@ void MainWindow::save_node_recursive(FileNode* node, std::ofstream& out) {
     }
 }
 
-// 先定义真正的保存函数
+
 void MainWindow::save_data() {
     std::ofstream out("data.txt");
     if (!out.is_open()) {
@@ -785,7 +930,7 @@ void MainWindow::save_data() {
     ui->statusbar->showMessage("数据保存成功！", 2000);
 }
 
-// 按钮点击时，直接调用它
+
 void MainWindow::on_btn_save_clicked() {
     save_data();
 }
@@ -840,4 +985,43 @@ void MainWindow::load_data() {
 void MainWindow::closeEvent(QCloseEvent *event) {
     save_data(); // 窗口关闭时，偷偷执行一次保存
     event->accept(); // 接受关闭事件
+}
+
+
+bool MainWindow::is_pinned(FileNode* node) const
+{
+    return file_system->is_pinned(node);
+}
+
+void MainWindow::toggle_pin(FileNode* node)
+{
+    if (node == nullptr)
+        return;
+
+    bool newState = !file_system->is_pinned(node);
+
+    if (!file_system->set_pinned(node, newState))
+        return;
+
+    refresh_tree();
+}
+
+//临时测试置顶功能
+void MainWindow::on_btn_test_pin_clicked()
+{
+    QListWidgetItem* item = ui->list_files->currentItem();
+
+    if (item == nullptr)
+    {
+        QMessageBox::information(this, "提示", "请先选择一个文件或文件夹！");
+        return;
+    }
+
+    FileNode* node =
+        item->data(Qt::UserRole).value<FileNode*>();
+
+    if (node == nullptr)
+        return;
+
+    toggle_pin(node);
 }
