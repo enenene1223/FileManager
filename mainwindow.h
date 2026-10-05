@@ -65,10 +65,12 @@ private slots:
     void save_data(); // 保存数据
     void save_node_recursive(FileNode* node, std::ofstream& out); // 递归辅助函数
 
-    void on_btn_save_clicked();
+
     void load_data();
 
     void on_btn_test_pin_clicked();//临时测试置顶功能
+
+
 
 private:
 
@@ -89,6 +91,8 @@ private:
 
     void refresh_tree();       // 刷新左侧目录树
     void refresh_file_list();  // 刷新右侧文件列表
+
+    void addToListWidget(FileNode* node); // 声明这个新函数
 
     void toggle_pin(FileNode* node);
     bool is_pinned(FileNode* node) const;

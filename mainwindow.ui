@@ -111,16 +111,16 @@
        </widget>
       </item>
       <item>
-       <widget class="QPushButton" name="btn_save">
+       <widget class="QPushButton" name="btn_test_pin">
         <property name="text">
-         <string>保存</string>
+         <string>置顶测试</string>
         </property>
        </widget>
       </item>
       <item>
-       <widget class="QPushButton" name="btn_test_pin">
+       <widget class="QPushButton" name="btn_undo">
         <property name="text">
-         <string>置顶测试</string>
+         <string>撤销</string>
         </property>
        </widget>
       </item>
@@ -150,7 +150,7 @@
      <x>0</x>
      <y>0</y>
      <width>800</width>
-     <height>22</height>
+     <height>18</height>
     </rect>
    </property>
   </widget>

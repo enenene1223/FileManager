@@ -21,6 +21,7 @@ public:
 
     bool is_directory() const;
     bool is_pinned() const;
+    void set_pinned(bool pinned);
 
     long long get_size() const;
     long long get_pin_order() const;

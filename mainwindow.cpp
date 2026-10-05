@@ -89,40 +89,28 @@ MainWindow::~MainWindow()
 }
 
 void MainWindow::refresh_file_list() {
-    // 刷新列表时禁止触发 itemChanged，
-    // 防止 setText / clear 等操作误触发重命名逻辑
-    QSignalBlocker blocker(ui->list_files);
 
-    ui->list_files->clear();
+        ui->list_files->clear();
+        if (current_dir_node == nullptr) return;
 
-    if (current_dir_node == nullptr) return;
+        // 第一趟遍历：先加载所有“置顶”的
+        FileNode *child = current_dir_node->get_first_child();
+        while (child != nullptr) {
+            if (child->is_pinned()) {
+                addToListWidget(child);
+            }
+            child = child->get_next_sibling();
+        }
 
-    // 1. 改用 getter 方法获取第一个子节点
-    FileNode *child = current_dir_node->get_first_child();
+        // 第二趟遍历：再加载所有“非置顶”的
+        child = current_dir_node->get_first_child(); // 重置指针，从头开始
+        while (child != nullptr) {
+            if (!child->is_pinned()) {
+                addToListWidget(child);
+            }
+            child = child->get_next_sibling();
+        }
 
-    while (child != nullptr) {
-        // 2. 改用 get_name() 获取名字，它返回的是 const std::string&，可以无缝转换
-        QString nameStr =
-            QString::fromStdString(child->get_name());
-        QListWidgetItem *item =
-            new QListWidgetItem(nameStr);
-
-        // 把节点指针存进 item，方便以后点击时用
-        item->setData(
-            Qt::UserRole,
-            QVariant::fromValue(child)
-        );
-
-        // 允许这个 Item 被程序调用 editItem() 编辑
-        item->setFlags(
-            item->flags() | Qt::ItemIsEditable
-            );
-
-        ui->list_files->addItem(item);
-
-        // 3. 改用 get_next_sibling() 获取下一个兄弟节点
-        child = child->get_next_sibling();
-    }
 }
 
 
@@ -905,10 +893,15 @@ void MainWindow::save_node_recursive(FileNode* node, std::ofstream& out) {
     std::string path = file_system->get_path(node);
 
     // 2. 按格式写入： D或F | 路径 | 创建时间 | 修改时间
+
+
+    // 原来： out << ... << get_modified_time() << "\n";
+    // 改成：
     out << (node->is_directory() ? "D" : "F") << "|"
         << path << "|"
         << node->get_created_time() << "|"
-        << node->get_modified_time() << "\n";
+        << node->get_modified_time() << "|"
+        << (node->is_pinned() ? "1" : "0") << "\n"; // 👈 加上置顶状态
 
     // 3. 递归遍历子节点
     FileNode* child = node->get_first_child();
@@ -931,9 +924,6 @@ void MainWindow::save_data() {
 }
 
 
-void MainWindow::on_btn_save_clicked() {
-    save_data();
-}
 
 
 
@@ -948,10 +938,15 @@ void MainWindow::load_data() {
         // 1. 按照 '|' 分割字符串
         std::stringstream ss(line);
         std::string type, path, c_time, m_time;
+        std::string pinned_str;
         std::getline(ss, type, '|');
         std::getline(ss, path, '|');
         std::getline(ss, c_time, '|');
         std::getline(ss, m_time, '|');
+        std::getline(ss,pinned_str,'|');
+
+
+
 
         // 2. 跳过根节点（因为 FileSystem 构造函数已经创建了根节点）
         if (path == "/" || path.empty()) continue;
@@ -968,11 +963,21 @@ void MainWindow::load_data() {
         FileNode* parentNode = file_system->find_by_path(parentPath);
         if (parentNode == nullptr) continue; // 父节点没找到，跳过（容错）
 
+        FileNode* newNode =nullptr;
+
         if (type == "D") {
-            file_system->create_folder(parentNode, name);
+            newNode=file_system->create_folder(parentNode, name);
         } else {
-            file_system->create_file(parentNode, name, ""); // 内容为空，因为只模拟文件信息
+            newNode=file_system->create_file(parentNode, name, ""); // 内容为空，因为只模拟文件信息
         }
+        // 🛡️ 关键：设置置顶状态
+        if (newNode != nullptr) {
+            // 如果读到了 "1"，或者旧格式里没这个字段但你想兼容，就根据情况判断
+            bool is_pinned = (pinned_str == "1");
+            newNode->set_pinned(is_pinned); // 调用队友的接口
+
+        }
+
     }
     in.close();
 
@@ -1004,6 +1009,7 @@ void MainWindow::toggle_pin(FileNode* node)
         return;
 
     refresh_tree();
+    refresh_file_list();
 }
 
 //临时测试置顶功能
@@ -1024,4 +1030,22 @@ void MainWindow::on_btn_test_pin_clicked()
         return;
 
     toggle_pin(node);
+}
+
+void MainWindow::addToListWidget(FileNode* node) {
+    if (node == nullptr) return;
+
+    QListWidgetItem *item = new QListWidgetItem(QString::fromStdString(node->get_name()));
+    item->setData(Qt::UserRole, QVariant::fromValue(node));
+    item->setFlags(item->flags() | Qt::ItemIsEditable);
+
+    // 方案B的核心：如果置顶，就加粗字体
+   // if (node->is_pinned()) {
+     //   QFont font = item->font();
+       // font.setBold(true);
+        //item->setFont(font);
+        // 也可以加个图钉图标：item->setText("📌 " + item->text());
+    //}
+
+    ui->list_files->addItem(item);
 }
