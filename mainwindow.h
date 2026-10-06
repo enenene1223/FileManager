@@ -70,6 +70,12 @@ private slots:
 
     void on_btn_test_pin_clicked();//临时测试置顶功能
 
+    void on_btn_new_triggered(QAction *arg1);
+
+    void on_btn_new_clicked();
+
+    void on_btn_new_clicked(bool checked);
+
 private:
 
     Ui::MainWindow *ui;

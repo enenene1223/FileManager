@@ -1025,3 +1025,4 @@ void MainWindow::on_btn_test_pin_clicked()
 
     toggle_pin(node);
 }
+
