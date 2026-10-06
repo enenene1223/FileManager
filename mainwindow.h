@@ -30,18 +30,12 @@ protected:
     void closeEvent(QCloseEvent *event) override;
 
 private slots:
-    void on_btn_new_folder_clicked();
-
     void on_btn_delete_clicked();
-
-    void on_btn_new_file_clicked();
 
     void on_btn_rename_clicked();
 
     void on_btn_back_clicked();
-
     void on_btn_forward_clicked();
-
     void on_btn_up_clicked();
 
     void on_btn_search_clicked();
@@ -55,9 +49,7 @@ private slots:
     void on_tree_dir_itemClicked(QTreeWidgetItem *item, int column);
 
     void on_btn_copy_clicked();
-
     void on_btn_move_clicked();
-
     void on_btn_paste_clicked();
 
     void on_btn_refresh_clicked();
@@ -69,6 +61,10 @@ private slots:
     void load_data();
 
     void on_btn_test_pin_clicked();//临时测试置顶功能
+
+    void on_btn_restore_clicked();
+    void on_btn_permanent_delete_clicked();
+    void on_btn_clear_recycle_clicked();
 
 
 private:
@@ -88,6 +84,10 @@ private:
 
     void build_tree_item(FileNode* node, QTreeWidgetItem* parentItem);
 
+
+    void on_btn_new_file_clicked();// 新建文件
+    void on_btn_new_folder_clicked();// 新建文件夹
+
     void refresh_tree();       // 刷新左侧目录树
     void refresh_file_list();  // 刷新右侧文件列表
 
@@ -95,6 +95,8 @@ private:
 
     void toggle_pin(FileNode* node);
     bool is_pinned(FileNode* node) const;
+
+    bool recycle_mode = false;
 
     QListWidgetItem *last_clicked_item = nullptr;   //双击重命名
     qint64 last_click_time = 0;

@@ -1,4 +1,5 @@
 #include "FileSystem.h"
+#include "operation.h"
 
 #include <ctime>
 #include <iomanip>
@@ -793,3 +794,106 @@ bool FileSystem::is_pinned(FileNode* node) const
     return node->pinned_;
 }
 
+
+bool FileSystem::undo(const Operation &operation)
+{
+    switch (operation.type)
+    {
+    case OperationType::CREATE:
+        // 撤销创建：把刚创建的节点放入回收站。
+        if (operation.node == nullptr)
+            return false;
+
+        return delete_node(operation.node);
+
+    case OperationType::DELETE:
+        // 撤销删除：从回收站恢复到原来的父目录。
+        if (operation.node == nullptr ||
+            operation.old_parent == nullptr)
+        {
+            return false;
+        }
+
+        return restore_node(
+            operation.node,
+            operation.old_parent
+            );
+
+    case OperationType::RENAME:
+        // 撤销重命名：恢复原名称。
+        if (operation.node == nullptr)
+            return false;
+
+        return rename_node(
+            operation.node,
+            operation.old_name
+            );
+
+    case OperationType::MOVE:
+        // 撤销移动：移回原来的父目录。
+        if (operation.node == nullptr ||
+            operation.old_parent == nullptr)
+        {
+            return false;
+        }
+
+        return move_node(
+            operation.node,
+            operation.old_parent
+            );
+
+    case OperationType::COPY:
+        // 撤销复制：把复制出来的节点放入回收站。
+        if (operation.node == nullptr)
+            return false;
+
+        return delete_node(operation.node);
+
+    case OperationType::RESTORE:
+        // 撤销恢复：重新放入回收站。
+        if (operation.node == nullptr)
+            return false;
+
+        return delete_node(operation.node);
+
+    default:
+        return false;
+    }
+}
+
+
+void FileSystem::reset()
+{
+    // 清空回收站
+    clear_recycle_bin();
+
+    // 删除根目录下的全部正常节点
+    FileNode *child = root_->first_child_;
+
+    while (child != nullptr)
+    {
+        FileNode *next = child->next_sibling_;
+
+        destroy_subtree(child);
+
+        child = next;
+    }
+
+    root_->first_child_ = nullptr;
+
+    // 当前目录回到根目录
+    current_directory_ = root_;
+
+    // 重置置顶顺序
+    next_pin_order_ = 0;
+
+    // 根节点恢复默认状态
+    root_->pinned_ = false;
+    root_->pin_order_ = -1;
+    root_->size_ = 0;
+    root_->content_.clear();
+
+    root_->modified_time_ = now_string();
+
+    set_error(FileSystemError::NONE);
+}

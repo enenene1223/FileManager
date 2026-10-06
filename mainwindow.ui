@@ -118,6 +118,27 @@
        </widget>
       </item>
       <item>
+       <widget class="QPushButton" name="btn_restore">
+        <property name="text">
+         <string>恢复选定项目</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="btn_permanent_delete">
+        <property name="text">
+         <string>永久删除选定项目</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="btn_clear_recycle">
+        <property name="text">
+         <string>清空回收站</string>
+        </property>
+       </widget>
+      </item>
+      <item>
        <widget class="QPushButton" name="btn_undo">
         <property name="text">
          <string>撤销</string>
@@ -150,7 +171,7 @@
      <x>0</x>
      <y>0</y>
      <width>800</width>
-     <height>18</height>
+     <height>22</height>
     </rect>
    </property>
   </widget>

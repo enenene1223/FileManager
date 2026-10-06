@@ -29,7 +29,9 @@ MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , ui(new Ui::MainWindow)
 {
+    // 生成界面
     ui->setupUi(this);
+
 
     // 左侧目录树使用两列：名称 + 置顶图标
     ui->tree_dir->setColumnCount(2);
@@ -43,20 +45,25 @@ MainWindow::MainWindow(QWidget *parent)
 
     ui->tree_dir->setHeaderHidden(true);
 
+
     // 关闭 QListWidget 默认的双击编辑，
     // 只允许我们在“新建”完成后主动进入重命名状态
     ui->list_files->setEditTriggers(QAbstractItemView::NoEditTriggers);
+
 
     // 初始化底层系统
     file_system = new FileSystem();
     current_dir_node = file_system->get_root(); // 根节点
 
+
     //自动加载上一次保存的数据
     load_data();
+
 
     // 刷新界面
     refresh_tree();
     refresh_file_list();
+
 
     // 新建的下拉菜单
     QMenu *newMenu = new QMenu(this);
@@ -80,6 +87,12 @@ MainWindow::MainWindow(QWidget *parent)
             this,
             &MainWindow::on_btn_new_folder_clicked);
 
+
+    // 默认隐藏回收站按钮
+    ui->btn_restore->hide();
+    ui->btn_permanent_delete->hide();
+    ui->btn_clear_recycle->hide();
+
 }
 
 MainWindow::~MainWindow()
@@ -88,31 +101,78 @@ MainWindow::~MainWindow()
     delete file_system; // 记得释放内存
 }
 
-void MainWindow::refresh_file_list() {
+void MainWindow::refresh_file_list()
+{
+    QSignalBlocker blocker(ui->list_files);
 
-        ui->list_files->clear();
-        if (current_dir_node == nullptr) return;
+    ui->list_files->clear();
 
-        // 第一趟遍历：先加载所有“置顶”的
-        FileNode *child = current_dir_node->get_first_child();
-        while (child != nullptr) {
-            if (child->is_pinned()) {
-                addToListWidget(child);
+    // ==================================================
+    // 回收站
+    // ==================================================
+    if (recycle_mode)
+    {
+        file_system->for_each_recycle_item(
+            [this](FileNode* node, const std::string& original_path)
+            {
+                if (node == nullptr)
+                    return;
+
+                QListWidgetItem* item =
+                    new QListWidgetItem(
+                        QString::fromStdString(
+                            node->get_name()
+                            )
+                        );
+
+                item->setData(
+                    Qt::UserRole,
+                    QVariant::fromValue(node)
+                    );
+
+                // 鼠标悬停时显示原来的完整路径
+                item->setToolTip(
+                    QString::fromStdString(original_path)
+                    );
+
+                ui->list_files->addItem(item);
             }
-            child = child->get_next_sibling();
-        }
+            );
 
-        // 第二趟遍历：再加载所有“非置顶”的
-        child = current_dir_node->get_first_child(); // 重置指针，从头开始
-        while (child != nullptr) {
-            if (!child->is_pinned()) {
-                addToListWidget(child);
-            }
-            child = child->get_next_sibling();
-        }
+        return;
+    }
 
+
+    // ==================================================
+    // 普通目录
+    // ==================================================
+    if (current_dir_node == nullptr)
+        return;
+
+    // 第一趟：置顶
+    FileNode* child =
+        current_dir_node->get_first_child();
+
+    while (child != nullptr)
+    {
+        if (child->is_pinned())
+            addToListWidget(child);
+
+        child = child->get_next_sibling();
+    }
+
+    // 第二趟：普通项目
+    child =
+        current_dir_node->get_first_child();
+
+    while (child != nullptr)
+    {
+        if (!child->is_pinned())
+            addToListWidget(child);
+
+        child = child->get_next_sibling();
+    }
 }
-
 
 
 // 递归生成树的辅助函数
@@ -150,6 +210,7 @@ void MainWindow::refresh_tree()
     if (current_dir_node == nullptr)
         return;
 
+
     // ==================================================
     // 第一部分：回收站
     // ==================================================
@@ -157,6 +218,12 @@ void MainWindow::refresh_tree()
         new QTreeWidgetItem(ui->tree_dir);
 
     recycleItem->setText(0, "回收站");
+
+    recycleItem->setData(
+        0,
+        Qt::UserRole + 1,
+        1
+        );
 
 
     // ==================================================
@@ -259,7 +326,7 @@ void MainWindow::refresh_tree()
         // 根目录 "/" 的最后一级为空
         if (displayName.isEmpty())
         {
-            displayName = "我的电脑";
+            displayName = "此电脑";
         }
 
         item->setText(0, displayName);
@@ -278,7 +345,7 @@ void MainWindow::refresh_tree()
     QTreeWidgetItem* rootItem =
         new QTreeWidgetItem(ui->tree_dir);
 
-    rootItem->setText(0, "我的电脑");
+    rootItem->setText(0, "此电脑");
 
     rootItem->setData(
         0,
@@ -576,6 +643,14 @@ void MainWindow::on_list_files_itemPressed(QListWidgetItem *item)
     if (item == nullptr)
         return;
 
+    // 回收站中的项目禁止通过单击进入重命名
+    if (recycle_mode)
+    {
+        last_clicked_item = nullptr;
+        last_click_time = 0;
+        return;
+    }
+
     qint64 current_time =
         QDateTime::currentMSecsSinceEpoch();
 
@@ -855,29 +930,125 @@ void MainWindow::on_list_files_itemDoubleClicked(QListWidgetItem *item)
 }
 
 
-void MainWindow::on_tree_dir_itemClicked(QTreeWidgetItem *item, int column)
+void MainWindow::on_tree_dir_itemClicked(
+    QTreeWidgetItem *item,
+    int column)
 {
+    Q_UNUSED(column);
 
-        if (item == nullptr) return;
-        FileNode* clickedNode = item->data(0, Qt::UserRole).value<FileNode*>();
+    if (item == nullptr)
+        return;
 
-        // 只有点中文件夹才切换
-        if (clickedNode != nullptr && clickedNode->is_directory() && clickedNode != current_dir_node) {
-            // 记录导航历史
-            back_stack.push(file_system->get_path(current_dir_node));
-            while (!forward_stack.empty()) forward_stack.pop();
 
-            QString currentPath = QString::fromStdString(file_system->get_path(clickedNode));
-            history_list.removeAll(currentPath);
-            history_list.prepend(currentPath);
-            if (history_list.size() > 20) history_list.removeLast();
+    // ==================================================
+    // 回收站
+    // ==================================================
+    int itemType =
+        item->data(
+                0,
+                Qt::UserRole + 1
+                ).toInt();
 
-            current_dir_node = clickedNode;
-            refresh_file_list();
-            ui->lineEdit_path->setText(QString::fromStdString(file_system->get_path(current_dir_node)));
-        }
+    if (itemType == 1)
+    {
+        recycle_mode = true;
 
+        // 显示回收站操作
+        ui->btn_restore->show();
+        ui->btn_permanent_delete->show();
+        ui->btn_clear_recycle->show();
+
+        // 隐藏普通文件操作
+        ui->btn_new->hide();
+        ui->btn_move->hide();
+        ui->btn_copy->hide();
+        ui->btn_paste->hide();
+        ui->btn_rename->hide();
+        ui->btn_delete->hide();
+        ui->btn_test_pin->hide();
+
+        refresh_file_list();
+
+        ui->lineEdit_path->setText("回收站");
+
+        return;
+    }
+
+
+    // ==================================================
+    // 普通目录
+    // ==================================================
+    recycle_mode = false;
+
+    // 恢复普通操作按钮
+    ui->btn_new->show();
+    ui->btn_move->show();
+    ui->btn_copy->show();
+    ui->btn_paste->show();
+    ui->btn_rename->show();
+    ui->btn_delete->show();
+    ui->btn_test_pin->show();
+
+    // 隐藏回收站操作
+    ui->btn_restore->hide();
+    ui->btn_permanent_delete->hide();
+    ui->btn_clear_recycle->hide();
+
+
+    FileNode* clickedNode =
+        item->data(
+                0,
+                Qt::UserRole
+                ).value<FileNode*>();
+
+    if (clickedNode == nullptr ||
+        !clickedNode->is_directory())
+    {
+        return;
+    }
+
+
+    if (clickedNode != current_dir_node)
+    {
+        // 记录后退历史
+        back_stack.push(
+            file_system->get_path(
+                current_dir_node
+                )
+            );
+
+        // 新路径后，清空前进历史
+        while (!forward_stack.empty())
+            forward_stack.pop();
+
+        QString currentPath =
+            QString::fromStdString(
+                file_system->get_path(
+                    clickedNode
+                    )
+                );
+
+        history_list.removeAll(currentPath);
+        history_list.prepend(currentPath);
+
+        if (history_list.size() > 20)
+            history_list.removeLast();
+
+        current_dir_node = clickedNode;
+
+        refresh_file_list();
+        refresh_tree();
+
+        ui->lineEdit_path->setText(
+            QString::fromStdString(
+                file_system->get_path(
+                    current_dir_node
+                    )
+                )
+            );
+    }
 }
+
 
 void MainWindow::on_btn_refresh_clicked()
 {
@@ -1049,4 +1220,176 @@ void MainWindow::addToListWidget(FileNode* node) {
     //}
 
     ui->list_files->addItem(item);
+}
+
+
+void MainWindow::on_btn_restore_clicked()
+{
+    if (!recycle_mode)
+        return;
+
+    QListWidgetItem* item =
+        ui->list_files->currentItem();
+
+    if (item == nullptr)
+    {
+        QMessageBox::warning(
+            this,
+            "提示",
+            "请先选择要恢复的项目！"
+            );
+        return;
+    }
+
+    FileNode* node =
+        item->data(
+                Qt::UserRole
+                ).value<FileNode*>();
+
+    if (node == nullptr)
+        return;
+
+
+    std::string originalPath =
+        file_system->get_recycle_original_path(node);
+
+    // 找到原来的父目录
+    size_t lastSlash =
+        originalPath.find_last_of('/');
+
+    std::string parentPath;
+
+    if (lastSlash == 0)
+    {
+        parentPath = "/";
+    }
+    else
+    {
+        parentPath =
+            originalPath.substr(
+                0,
+                lastSlash
+                );
+    }
+
+    FileNode* parent =
+        file_system->find_by_path(parentPath);
+
+    if (parent == nullptr)
+    {
+        QMessageBox::warning(
+            this,
+            "恢复失败",
+            "原来的父目录已经不存在，无法恢复！"
+            );
+        return;
+    }
+
+    bool success =
+        file_system->restore_node(
+            node,
+            parent
+            );
+
+    if (!success)
+    {
+        QMessageBox::warning(
+            this,
+            "恢复失败",
+            "恢复失败！可能存在同名文件或文件夹。"
+            );
+        return;
+    }
+
+    refresh_file_list();
+    refresh_tree();
+}
+
+
+void MainWindow::on_btn_permanent_delete_clicked()
+{
+    if (!recycle_mode)
+        return;
+
+    QListWidgetItem* item =
+        ui->list_files->currentItem();
+
+    if (item == nullptr)
+    {
+        QMessageBox::warning(
+            this,
+            "提示",
+            "请先选择要永久删除的项目！"
+            );
+        return;
+    }
+
+    FileNode* node =
+        item->data(
+                Qt::UserRole
+                ).value<FileNode*>();
+
+    if (node == nullptr)
+        return;
+
+
+    QMessageBox::StandardButton reply =
+        QMessageBox::question(
+            this,
+            "确认永久删除",
+            "确定要永久删除这个项目吗？\n此操作无法撤销。",
+            QMessageBox::Yes | QMessageBox::No
+            );
+
+    if (reply != QMessageBox::Yes)
+        return;
+
+
+    if (!file_system->permanent_delete(node))
+    {
+        QMessageBox::warning(
+            this,
+            "失败",
+            "永久删除失败！"
+            );
+        return;
+    }
+
+    refresh_file_list();
+    refresh_tree();
+}
+
+
+void MainWindow::on_btn_clear_recycle_clicked()
+{
+    if (!recycle_mode)
+        return;
+
+    if (file_system->get_recycle_count() == 0)
+    {
+        QMessageBox::information(
+            this,
+            "提示",
+            "回收站已经是空的。"
+            );
+        return;
+    }
+
+
+    QMessageBox::StandardButton reply =
+        QMessageBox::question(
+            this,
+            "清空回收站",
+            "确定要清空回收站吗？\n所有项目将被永久删除。",
+            QMessageBox::Yes | QMessageBox::No
+            );
+
+    if (reply != QMessageBox::Yes)
+        return;
+
+
+    file_system->clear_recycle_bin();
+
+    refresh_file_list();
+    refresh_tree();
 }

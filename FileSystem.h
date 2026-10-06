@@ -24,6 +24,8 @@ enum class FileSystemError {
     INVALID_METADATA
 };
 
+class Operation;
+
 class FileSystem
 {
 public:
@@ -53,6 +55,13 @@ public:
     // =========================
     // 基本文件操作
     // =========================
+
+    // 查看目录
+    FileNode *get_current_directory() const;
+
+    bool change_directory(FileNode *directory);
+
+    bool change_directory_by_path(const std::string &path);
 
     // 普通删除：从活动树摘除，放入回收站，不立即释放内存。
     bool delete_node(FileNode *node);
@@ -92,15 +101,11 @@ public:
     // ".."                      -> 当前目录的父目录；根目录继续停留在根目录
     FileNode *find_by_path(const std::string &path) const;
 
-    // =========================
-    // 当前目录
-    // =========================
+    // 遍历 / 搜索支持
+    // 深度优先遍历 start_node 子树，包含 start_node 自身。
+    // 搜索模块不需要知道孩子-兄弟指针的内部实现。
+    void traverse(FileNode *start_node, const NodeVisitor &visitor) const;
 
-    FileNode *get_current_directory() const;
-
-    bool change_directory(FileNode *directory);
-
-    bool change_directory_by_path(const std::string &path);
 
     // =========================
     // 文件内容
@@ -123,6 +128,7 @@ public:
                       const std::string &created_time,
                       const std::string &modified_time);
 
+
     // =========================
     // 路径与根目录
     // =========================
@@ -133,13 +139,6 @@ public:
 
     FileNode *get_root() const;
 
-    // =========================
-    // 遍历 / 搜索支持
-    // =========================
-
-    // 深度优先遍历 start_node 子树，包含 start_node 自身。
-    // 搜索模块不需要知道孩子-兄弟指针的内部实现。
-    void traverse(FileNode *start_node, const NodeVisitor &visitor) const;
 
     // =========================
     // 回收站查询
@@ -153,6 +152,7 @@ public:
 
     void for_each_recycle_item(const RecycleVisitor &visitor) const;
 
+
     // =========================
     // 合法性检查
     // =========================
@@ -163,11 +163,29 @@ public:
 
     bool can_move(FileNode *node, FileNode *target_parent) const;
 
+
     // =========================
     // 错误信息
     // =========================
 
     FileSystemError get_last_error() const;
+
+
+    // =========================
+    // 撤销
+    // =========================
+
+    // operation 由上层撤销模块从 OperationStack 中取出。
+    // FileSystem 负责执行对应的逆操作。
+    bool undo(const Operation &operation);
+
+
+    // =========================
+    // 重置整个虚拟文件系统
+    // =========================
+
+    // 清空正常文件树和回收站，保留根节点。
+    void reset();
 
 private:
     struct RecycleEntry
