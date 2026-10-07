@@ -12,6 +12,7 @@
 #include <QListWidgetItem>
 #include <QTreeWidgetItem>
 #include <QStringList>
+#include "Operation.h"
 
 QT_BEGIN_NAMESPACE
 namespace Ui {
@@ -68,6 +69,10 @@ private slots:
     void on_btn_clear_recycle_clicked();
 
 
+    void on_btn_undo_clicked();
+
+    void on_btn_reset_clicked();
+
 private:
 
     Ui::MainWindow *ui;
@@ -77,6 +82,8 @@ private:
     // 导航用的两个栈
     std::stack<std::string> back_stack;
     std::stack<std::string> forward_stack;
+
+    std::stack<Operation> undo_stack;
 
     // 辅助函数
     void navigate_to(const std::string& path);

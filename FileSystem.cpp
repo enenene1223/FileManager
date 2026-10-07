@@ -921,7 +921,8 @@ void FileSystem::reset()
 bool FileSystem::restore_pin_state(FileNode* node,bool pinned,long long pin_order){
     set_error(FileSystemError::NONE);
 
-    if (node == nullptr || !owns_active_node(node)) {
+    // 允许活动树节点，也允许回收站里的节点
+    if (node == nullptr || (!owns_active_node(node) && !is_in_recycle_bin(node))) {
         set_error(FileSystemError::INVALID_NODE);
         return false;
     }
