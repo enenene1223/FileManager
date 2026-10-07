@@ -14,7 +14,7 @@
 
 #include <QDateTime>
 #include <QApplication>
-#include <qtoolbutton.h>
+#include <QToolButton>
 
 #include <fstream>
 #include <string>
@@ -23,6 +23,8 @@
 
 #include <algorithm>
 #include <QHeaderView>
+
+#include <utility>
 
 
 MainWindow::MainWindow(QWidget *parent)
@@ -53,7 +55,6 @@ MainWindow::MainWindow(QWidget *parent)
 
     // 初始化底层系统
     file_system = new FileSystem();
-    current_dir_node = file_system->get_root(); // 根节点
 
 
     //自动加载上一次保存的数据
@@ -103,6 +104,9 @@ MainWindow::~MainWindow()
 
 void MainWindow::refresh_file_list()
 {
+    last_clicked_item = nullptr;
+    last_click_time = 0;
+
     QSignalBlocker blocker(ui->list_files);
 
     ui->list_files->clear();
@@ -146,12 +150,15 @@ void MainWindow::refresh_file_list()
     // ==================================================
     // 普通目录
     // ==================================================
-    if (current_dir_node == nullptr)
+    FileNode* currentDirectory =
+        file_system->get_current_directory();
+
+    if (currentDirectory == nullptr)
         return;
 
     // 第一趟：置顶
     FileNode* child =
-        current_dir_node->get_first_child();
+        currentDirectory->get_first_child();
 
     while (child != nullptr)
     {
@@ -163,7 +170,7 @@ void MainWindow::refresh_file_list()
 
     // 第二趟：普通项目
     child =
-        current_dir_node->get_first_child();
+        currentDirectory->get_first_child();
 
     while (child != nullptr)
     {
@@ -207,7 +214,7 @@ void MainWindow::refresh_tree()
 {
     ui->tree_dir->clear();
 
-    if (current_dir_node == nullptr)
+    if (file_system->get_current_directory() == nullptr)
         return;
 
 
@@ -360,7 +367,54 @@ void MainWindow::refresh_tree()
         rootItem
         );
 
-    rootItem->setExpanded(true);
+    FileNode* currentDirectory =
+        file_system->get_current_directory();
+
+    auto expandToCurrent =
+        [&](auto&& self, QTreeWidgetItem* treeItem) -> bool
+    {
+        if (treeItem == nullptr)
+            return false;
+
+        FileNode* node =
+            treeItem->data(
+                        0,
+                        Qt::UserRole
+                        ).value<FileNode*>();
+
+        // 找到了当前目录
+        if (node == currentDirectory)
+        {
+            treeItem->setExpanded(true);
+
+            // 顺便让左侧目录树高亮当前目录
+            ui->tree_dir->setCurrentItem(treeItem);
+
+            return true;
+        }
+
+        // 在孩子中继续找
+        for (int i = 0;
+             i < treeItem->childCount();
+             ++i)
+        {
+            if (self(self, treeItem->child(i)))
+            {
+                // 当前目录在这个节点下面，
+                // 所以这个父节点也必须展开
+                treeItem->setExpanded(true);
+                return true;
+            }
+        }
+
+        return false;
+    };
+
+    expandToCurrent(
+        expandToCurrent,
+        rootItem
+        );
+
 }
 
 
@@ -375,7 +429,7 @@ void MainWindow::on_btn_new_folder_clicked()
     int index = 2;
 
     while (file_system->find_child(
-               current_dir_node,
+               file_system->get_current_directory(),
                name.toStdString()) != nullptr)
     {
         name = QString("新建文件夹 (%1)").arg(index);
@@ -385,7 +439,7 @@ void MainWindow::on_btn_new_folder_clicked()
     // 直接创建
     FileNode* newNode =
         file_system->create_folder(
-            current_dir_node,
+            file_system->get_current_directory(),
             name.toStdString()
             );
 
@@ -439,7 +493,7 @@ void MainWindow::on_btn_new_file_clicked()
     int index = 2;
 
     while (file_system->find_child(
-               current_dir_node,
+               file_system->get_current_directory(),
                name.toStdString()) != nullptr)
     {
         name = QString("新建文件 (%1).txt").arg(index);
@@ -449,7 +503,7 @@ void MainWindow::on_btn_new_file_clicked()
     // 直接创建，不再弹输入框
     FileNode* newNode =
         file_system->create_file(
-            current_dir_node,
+            file_system->get_current_directory(),
             name.toStdString(),
             ""
             );
@@ -499,8 +553,13 @@ void MainWindow::on_btn_delete_clicked()
 
         // 1. 获取当前选中的项
         QListWidgetItem *item = ui->list_files->currentItem();
+
         if (item == nullptr) {
-            QMessageBox::warning(this, "提示", "请先选择要删除的文件或文件夹！");
+            QMessageBox::warning(
+                this,
+                "提示",
+                "请先选择要删除的文件或文件夹！"
+            );
             return;
         }
 
@@ -519,8 +578,6 @@ void MainWindow::on_btn_delete_clicked()
             bool success = file_system->delete_node(selectedNode);
 
             if (success) {
-                file_system->set_pinned(selectedNode, false);
-
                 refresh_file_list();
                 refresh_tree();
             } else {
@@ -632,7 +689,9 @@ void MainWindow::on_list_files_itemChanged(QListWidgetItem *item)
     // 同步刷新当前路径栏
     ui->lineEdit_path->setText(
         QString::fromStdString(
-            file_system->get_path(current_dir_node)
+            file_system->get_path(
+                file_system->get_current_directory()
+                )
             )
         );
 }
@@ -720,7 +779,7 @@ void MainWindow::on_btn_paste_clicked()
         FileNode *new_node =
             file_system->copy_node(
                 clipboard_node,
-                current_dir_node
+                file_system->get_current_directory()
                 );
 
         if (new_node == nullptr)
@@ -744,7 +803,7 @@ void MainWindow::on_btn_paste_clicked()
         bool success =
             file_system->move_node(
                 clipboard_node,
-                current_dir_node
+                file_system->get_current_directory()
                 );
 
         if (!success)
@@ -774,7 +833,11 @@ void MainWindow::on_btn_back_clicked()
         return;
     }
     // 将当前路径压入前进栈
-    forward_stack.push(file_system->get_path(current_dir_node));
+    forward_stack.push(
+        file_system->get_path(
+            file_system->get_current_directory()
+            )
+    );
     // 取出后退栈的历史路径
     std::string targetPath = back_stack.top();
     back_stack.pop();
@@ -790,7 +853,11 @@ void MainWindow::on_btn_forward_clicked()
         return;
     }
     // 将当前路径压入后退栈
-    back_stack.push(file_system->get_path(current_dir_node));
+    back_stack.push(
+        file_system->get_path(
+            file_system->get_current_directory()
+            )
+    );
     // 取出前进栈的历史路径
     std::string targetPath = forward_stack.top();
     forward_stack.pop();
@@ -801,23 +868,35 @@ void MainWindow::on_btn_forward_clicked()
 
 void MainWindow::on_btn_up_clicked()
 {
-    if (current_dir_node == nullptr || current_dir_node->get_parent() == nullptr) {
-        ui->statusbar->showMessage("已经是根目录了", 2000);
+    FileNode* current =
+        file_system->get_current_directory();
+
+    if (current == nullptr ||
+        current->get_parent() == nullptr)
+    {
+        ui->statusbar->showMessage(
+            "已经是根目录了",
+            2000
+            );
         return;
     }
 
-    // 记录当前路径到后退栈
-    back_stack.push(file_system->get_path(current_dir_node));
-    // 进入新目录后，前进栈必须清空
-    while (!forward_stack.empty()) forward_stack.pop();
+    FileNode* parent =
+        current->get_parent();
 
-    // 切换到父节点
-    current_dir_node = current_dir_node->get_parent();
+    // 保存当前位置，用于“后退”
+    back_stack.push(
+        file_system->get_path(current)
+        );
 
-    // 刷新界面
-    refresh_file_list();
-    refresh_tree();
-    ui->lineEdit_path->setText(QString::fromStdString(file_system->get_path(current_dir_node)));
+    // 新导航发生后，清空前进栈
+    while (!forward_stack.empty())
+        forward_stack.pop();
+
+    // 统一走 navigate_to
+    navigate_to(
+        file_system->get_path(parent)
+        );
 }
 
 
@@ -832,7 +911,11 @@ void MainWindow::on_btn_search_clicked()
 
     QList<FileNode*> results;
     // 从当前目录开始递归搜索
-    search_recursive(current_dir_node, keyword, results);
+    search_recursive(
+        file_system->get_current_directory(),
+        keyword,
+        results
+        );
 
     if (results.isEmpty()) {
         QMessageBox::information(this, "搜索", "未找到匹配的内容！");
@@ -853,31 +936,56 @@ void MainWindow::on_btn_search_clicked()
 
 
 // 统一的跳转逻辑
-void MainWindow::navigate_to(const std::string& path) {
-    FileNode* target = file_system->find_by_path(path);
-    if (target != nullptr && target->is_directory()) {
-        current_dir_node = target;
-        refresh_file_list();
-        refresh_tree();
-        // 更新路径栏显示
-        ui->lineEdit_path->setText(QString::fromStdString(file_system->get_path(current_dir_node)));
-    } else {
-        // 如果历史路径已失效
-        ui->lineEdit_path->setText(QString::fromStdString(file_system->get_path(current_dir_node)));
-        ui->statusbar->showMessage("历史路径不存在或已被删除！", 2000);
+void MainWindow::navigate_to(const std::string& path)
+{
+    // 让 FileSystem 自己修改“当前目录”
+    bool success =
+        file_system->change_directory_by_path(path);
+
+    if (!success)
+    {
+        FileNode* current =
+            file_system->get_current_directory();
+
+        ui->lineEdit_path->setText(
+            QString::fromStdString(
+                file_system->get_path(current)
+                )
+            );
+
+        ui->statusbar->showMessage(
+            "历史路径不存在或已被删除！",
+            2000
+            );
+
+        return;
     }
 
-    if (target != nullptr && target->is_directory()) {
-        // ... 更新界面 ...
+    FileNode* current =
+        file_system->get_current_directory();
 
-        // 记录历史记录
-        QString currentPath = QString::fromStdString(path);
-        history_list.removeAll(currentPath); // 去重
-        history_list.prepend(currentPath);   // 放到最前面
-        if (history_list.size() > 20) history_list.removeLast(); // 限制最多20条
-    }
+    const std::string currentPath =
+        file_system->get_path(current);
 
+    // 最近访问
+    QString qPath =
+        QString::fromStdString(currentPath);
+
+    history_list.removeAll(qPath);
+    history_list.prepend(qPath);
+
+    if (history_list.size() > 20)
+        history_list.removeLast();
+
+    // 刷新界面
+    refresh_file_list();
+    refresh_tree();
+
+    ui->lineEdit_path->setText(
+        QString::fromStdString(currentPath)
+        );
 }
+
 
 // 递归搜索（DFS）
 void MainWindow::search_recursive(FileNode* node, const QString& keyword, QList<FileNode*>& results) {
@@ -897,36 +1005,61 @@ void MainWindow::search_recursive(FileNode* node, const QString& keyword, QList<
     }
 }
 
-void MainWindow::on_list_files_itemDoubleClicked(QListWidgetItem *item)
+void MainWindow::on_list_files_itemDoubleClicked(
+    QListWidgetItem *item)
 {
+    if (item == nullptr)
+        return;
 
-        if (item == nullptr) return;
+    FileNode* targetNode =
+        item->data(Qt::UserRole)
+            .value<FileNode*>();
 
-        // 1. 取出底层节点指针
-        FileNode* targetNode = item->data(Qt::UserRole).value<FileNode*>();
-        if (targetNode == nullptr) return;
+    if (targetNode == nullptr)
+        return;
 
-        // 2. 判断是不是文件夹（只有文件夹能双击进入）
-        if (targetNode->is_directory()) {
-            // ===== 导航核心逻辑：记录历史，清空前进栈 =====
-            back_stack.push(file_system->get_path(current_dir_node)); // 把当前路径压入后退栈
-            while (!forward_stack.empty()) forward_stack.pop();       // 清空前进栈（符合浏览器规则）
-            // ============================================
+    if (!targetNode->is_directory())
+    {
+        QMessageBox::information(
+            this,
+            "提示",
+            "这是一个文件，双击不能进入。"
+            );
+        return;
+    }
 
-            // 3. 切换当前目录节点
-            current_dir_node = targetNode;
+    // 回收站里的节点不属于活动文件树，
+    // 不能把它当普通目录进入
+    if (recycle_mode)
+        return;
 
-            // 4. 刷新界面：右侧列表、路径栏
-            refresh_file_list();
-            refresh_tree(); // 如果左侧树也能同步高亮就更好
-            ui->lineEdit_path->setText(QString::fromStdString(file_system->get_path(current_dir_node)));
+    FileNode* current =
+        file_system->get_current_directory();
 
-            ui->statusbar->showMessage("已进入文件夹：" + QString::fromStdString(current_dir_node->get_name()), 2000);
-        } else {
-            // 双击的是文件，弹窗提示（或者以后用来显示文件属性）
-            QMessageBox::information(this, "提示", "这是一个文件，双击不能进入。");
-        }
+    std::string targetPath =
+        file_system->get_path(targetNode);
 
+    if (targetPath.empty())
+        return;
+
+    // 保存当前位置
+    back_stack.push(
+        file_system->get_path(current)
+        );
+
+    while (!forward_stack.empty())
+        forward_stack.pop();
+
+    // 真正的目录切换统一走这里
+    navigate_to(targetPath);
+
+    ui->statusbar->showMessage(
+        "已进入文件夹：" +
+            QString::fromStdString(
+                targetNode->get_name()
+                ),
+        2000
+        );
 }
 
 
@@ -996,10 +1129,7 @@ void MainWindow::on_tree_dir_itemClicked(
 
 
     FileNode* clickedNode =
-        item->data(
-                0,
-                Qt::UserRole
-                ).value<FileNode*>();
+        item->data(0,Qt::UserRole).value<FileNode*>();
 
     if (clickedNode == nullptr ||
         !clickedNode->is_directory())
@@ -1007,46 +1137,27 @@ void MainWindow::on_tree_dir_itemClicked(
         return;
     }
 
+    FileNode* current =
+        file_system->get_current_directory();
 
-    if (clickedNode != current_dir_node)
-    {
-        // 记录后退历史
-        back_stack.push(
-            file_system->get_path(
-                current_dir_node
-                )
-            );
+    if (clickedNode == current)
+        return;
 
-        // 新路径后，清空前进历史
-        while (!forward_stack.empty())
-            forward_stack.pop();
+    std::string targetPath =
+        file_system->get_path(clickedNode);
 
-        QString currentPath =
-            QString::fromStdString(
-                file_system->get_path(
-                    clickedNode
-                    )
-                );
+    // 记录当前目录，供“后退”使用
+    back_stack.push(
+        file_system->get_path(current)
+        );
 
-        history_list.removeAll(currentPath);
-        history_list.prepend(currentPath);
+    // 发生新的导航后，清空“前进”
+    while (!forward_stack.empty())
+        forward_stack.pop();
 
-        if (history_list.size() > 20)
-            history_list.removeLast();
+    // 统一交给 navigate_to 完成真正的目录切换
+    navigate_to(targetPath);
 
-        current_dir_node = clickedNode;
-
-        refresh_file_list();
-        refresh_tree();
-
-        ui->lineEdit_path->setText(
-            QString::fromStdString(
-                file_system->get_path(
-                    current_dir_node
-                    )
-                )
-            );
-    }
 }
 
 
@@ -1110,14 +1221,13 @@ void MainWindow::load_data() {
         std::stringstream ss(line);
         std::string type, path, c_time, m_time;
         std::string pinned_str;
+        std::string pin_order_str;
         std::getline(ss, type, '|');
         std::getline(ss, path, '|');
         std::getline(ss, c_time, '|');
         std::getline(ss, m_time, '|');
         std::getline(ss,pinned_str,'|');
-
-
-
+        std::getline(ss, pin_order_str, '|');
 
         // 2. 跳过根节点（因为 FileSystem 构造函数已经创建了根节点）
         if (path == "/" || path.empty()) continue;
@@ -1141,11 +1251,27 @@ void MainWindow::load_data() {
         } else {
             newNode=file_system->create_file(parentNode, name, ""); // 内容为空，因为只模拟文件信息
         }
+
         // 🛡️ 关键：设置置顶状态
         if (newNode != nullptr) {
             // 如果读到了 "1"，或者旧格式里没这个字段但你想兼容，就根据情况判断
             bool is_pinned = (pinned_str == "1");
-            newNode->set_pinned(is_pinned); // 调用队友的接口
+            long long pin_order = -1;
+
+            if (!pin_order_str.empty()) {
+                try {
+                    pin_order = std::stoll(pin_order_str);
+                }
+                catch (...) {
+                    pin_order = -1;
+                }
+            }
+
+            file_system->restore_pin_state(
+                newNode,
+                is_pinned,
+                pin_order
+                );
 
         }
 
@@ -1155,19 +1281,21 @@ void MainWindow::load_data() {
     // 5. 加载完成后，刷新界面
     refresh_tree();
     refresh_file_list();
-    ui->lineEdit_path->setText(QString::fromStdString(file_system->get_path(current_dir_node)));
+    ui->lineEdit_path->setText(
+        QString::fromStdString(
+            file_system->get_path(
+                file_system->get_current_directory()
+            )
+        )
+    );
 }
+
 
 void MainWindow::closeEvent(QCloseEvent *event) {
     save_data(); // 窗口关闭时，偷偷执行一次保存
     event->accept(); // 接受关闭事件
 }
 
-
-bool MainWindow::is_pinned(FileNode* node) const
-{
-    return file_system->is_pinned(node);
-}
 
 void MainWindow::toggle_pin(FileNode* node)
 {

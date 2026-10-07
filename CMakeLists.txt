@@ -20,6 +20,8 @@ qt_add_executable(FileManager
     Operation.cpp
 )
 
+target_compile_features(FileManager PRIVATE cxx_std_17)
+
 qt_add_translations(
     TARGETS FileManager
     TS_FILES FileManager_zh_CN.ts

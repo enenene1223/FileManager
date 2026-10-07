@@ -4,6 +4,7 @@
 #include <ctime>
 #include <iomanip>
 #include <sstream>
+#include <cctype>
 
 namespace {
 bool contains_forbidden_name_character(const std::string &name)
@@ -549,9 +550,21 @@ FileSystemError FileSystem::get_last_error() const
     return last_error_;
 }
 
-bool FileSystem::is_valid_name(const std::string &name)
+bool FileSystem::is_valid_name(const std::string& name)
 {
-    return !name.empty() && name != "." && name != ".." && !contains_forbidden_name_character(name);
+    if (name.empty())
+        return false;
+
+    bool allWhitespace = true;
+
+    for (char ch : name) {
+        if (!std::isspace(static_cast<unsigned char>(ch))) {
+            allWhitespace = false;
+            break;
+        }
+    }
+
+    return !allWhitespace;
 }
 
 std::string FileSystem::now_string()
@@ -760,9 +773,11 @@ void FileSystem::traverse_recursive(FileNode *node, const NodeVisitor &visitor) 
 }
 
 
-bool FileSystem::set_pinned(FileNode* node, bool pinned)
+bool FileSystem::set_pinned(FileNode* node, bool pinned)// 设置置顶
 {
-    if (node == nullptr)
+    if (node == nullptr ||
+        !owns_active_node(node) ||
+        node == root_)
     {
         set_error(FileSystemError::INVALID_NODE);
         return false;
@@ -786,7 +801,7 @@ bool FileSystem::set_pinned(FileNode* node, bool pinned)
 }
 
 
-bool FileSystem::is_pinned(FileNode* node) const
+bool FileSystem::is_pinned(FileNode* node) const // 检查置顶状态
 {
     if (node == nullptr)
         return false;
@@ -896,4 +911,85 @@ void FileSystem::reset()
     root_->modified_time_ = now_string();
 
     set_error(FileSystemError::NONE);
+}
+
+
+// =========================
+// 持久化接口
+// =========================
+
+bool FileSystem::restore_pin_state(FileNode* node,bool pinned,long long pin_order){
+    set_error(FileSystemError::NONE);
+
+    if (node == nullptr || !owns_active_node(node)) {
+        set_error(FileSystemError::INVALID_NODE);
+        return false;
+    }
+
+    node->pinned_ = pinned;
+
+    if (!pinned) {
+        node->pin_order_ = -1;
+        return true;
+    }
+
+    // 兼容旧存档：旧格式可能没有 pin_order
+    if (pin_order < 0) {
+        node->pin_order_ = next_pin_order_++;
+        return true;
+    }
+
+    node->pin_order_ = pin_order;
+
+    if (pin_order >= next_pin_order_) {
+        next_pin_order_ = pin_order + 1;
+    }
+
+    return true;
+}
+
+
+FileNode* FileSystem::create_recycle_node_for_load(
+    FileNode* recycle_parent,
+    const std::string& name,
+    bool is_directory,
+    const std::string& original_path)
+{
+    set_error(FileSystemError::NONE);
+
+    if (!is_valid_name(name)) {
+        set_error(FileSystemError::INVALID_NAME);
+        return nullptr;
+    }
+
+    FileNode* node = new FileNode(name, is_directory);
+
+    // 情况1：回收站顶层节点
+    if (recycle_parent == nullptr) {
+        RecycleEntry* entry =
+            new RecycleEntry(node, original_path, recycle_head_);
+
+        recycle_head_ = entry;
+        ++recycle_count_;
+
+        return node;
+    }
+
+    // 情况2：回收站文件夹内部的子节点
+    node->parent_ = recycle_parent;
+
+    if (recycle_parent->first_child_ == nullptr) {
+        recycle_parent->first_child_ = node;
+    }
+    else {
+        FileNode* child = recycle_parent->first_child_;
+
+        while (child->next_sibling_ != nullptr) {
+            child = child->next_sibling_;
+        }
+
+        child->next_sibling_ = node;
+    }
+
+    return node;
 }

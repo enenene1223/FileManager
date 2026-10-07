@@ -8,6 +8,7 @@
 #include <stack>
 #include <string>
 #include <QList>
+#include <iosfwd>
 #include <QListWidgetItem>
 #include <QTreeWidgetItem>
 #include <QStringList>
@@ -72,7 +73,6 @@ private:
     Ui::MainWindow *ui;
 
     FileSystem *file_system;    // 底层文件系统核心
-    FileNode *current_dir_node; // 当前所在目录的节点指针
 
     // 导航用的两个栈
     std::stack<std::string> back_stack;
@@ -94,7 +94,6 @@ private:
     void addToListWidget(FileNode* node); // 声明这个新函数
 
     void toggle_pin(FileNode* node);
-    bool is_pinned(FileNode* node) const;
 
     bool recycle_mode = false;
 
