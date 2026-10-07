@@ -4,8 +4,8 @@ FileNode::FileNode(const std::string &name, bool is_directory)
     : name_(name)
     , is_directory_(is_directory)
     , pinned_(false)
-    , pin_order_(-1)
     , size_(0)
+    , pin_order_(-1)
     , created_time_()
     , modified_time_()
     , content_()
@@ -30,10 +30,10 @@ bool FileNode::is_pinned() const
 {
     return pinned_;
 }
+
 void FileNode::set_pinned(bool pinned) {
     pinned_ = pinned; // 如果队友的变量名是 pinned_，就改成 pinned_ = pinned;
 }
-
 
 long long FileNode::get_size() const
 {

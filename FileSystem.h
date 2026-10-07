@@ -83,6 +83,12 @@ public:
     bool set_pinned(FileNode* node, bool pinned);
     bool is_pinned(FileNode* node) const;
 
+    // 持久化加载时恢复置顶状态。
+    // 同时维护 next_pin_order_，避免重启后新置顶顺序冲突。
+    bool restore_pin_state(FileNode* node,
+                           bool pinned,
+                           long long pin_order);
+
 
     // 递归深拷贝整个子树。
     FileNode *copy_node(FileNode *node, FileNode *target_parent);
@@ -141,7 +147,7 @@ public:
 
 
     // =========================
-    // 回收站查询
+    // 回收站
     // =========================
 
     bool is_in_recycle_bin(FileNode *node) const;
@@ -151,6 +157,13 @@ public:
     std::size_t get_recycle_count() const;
 
     void for_each_recycle_item(const RecycleVisitor &visitor) const;
+
+    FileNode* create_recycle_node_for_load(
+        FileNode* recycle_parent,
+        const std::string& name,
+        bool is_directory,
+        const std::string& original_path = ""
+        );
 
 
     // =========================
@@ -207,7 +220,7 @@ private:
     std::size_t recycle_count_;
     FileSystemError last_error_;
 
-    static bool is_valid_name(const std::string &name);
+    static bool is_valid_name(const std::string &name) ;
     static std::string now_string();
 
     void set_error(FileSystemError error);
