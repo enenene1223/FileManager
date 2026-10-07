@@ -145,6 +145,13 @@
         </property>
        </widget>
       </item>
+      <item>
+       <widget class="QPushButton" name="btn_reset">
+        <property name="text">
+         <string>重置系统</string>
+        </property>
+       </widget>
+      </item>
      </layout>
     </item>
     <item>
@@ -171,7 +178,7 @@
      <x>0</x>
      <y>0</y>
      <width>800</width>
-     <height>22</height>
+     <height>18</height>
     </rect>
    </property>
   </widget>

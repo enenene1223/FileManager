@@ -451,6 +451,12 @@ void MainWindow::on_btn_new_folder_clicked()
             );
         return;
     }
+    Operation op;
+    op.type = OperationType::CREATE;
+    op.node = newNode;
+    op.old_parent = file_system->get_current_directory();
+    undo_stack.push(op);
+    save_data(); // 立即保存
 
     // 刷新界面
     refresh_file_list();
@@ -517,6 +523,17 @@ void MainWindow::on_btn_new_file_clicked()
         return;
     }
 
+
+    // 👇 加上这几行：
+    Operation op;
+    op.type = OperationType::CREATE;
+    op.node = newNode;
+    op.old_parent = file_system->get_current_directory();
+    undo_stack.push(op);
+    save_data();
+
+
+
     // 刷新界面
     refresh_file_list();
     refresh_tree();
@@ -578,6 +595,13 @@ void MainWindow::on_btn_delete_clicked()
             bool success = file_system->delete_node(selectedNode);
 
             if (success) {
+                // 👇 加上这几行：
+                Operation op;
+                op.type = OperationType::DELETE;
+                op.node = selectedNode;
+                op.old_parent = file_system->get_current_directory();
+                undo_stack.push(op);
+                save_data();
                 refresh_file_list();
                 refresh_tree();
             } else {
@@ -612,6 +636,15 @@ void MainWindow::on_btn_rename_clicked()
             bool success = file_system->rename_node(selectedNode, newName.toStdString());
 
             if (success) {
+                // 👇 加上这几行：
+                Operation op;
+                op.type = OperationType::RENAME;
+                op.node = selectedNode;
+                op.old_name = selectedNode->get_name(); // 这里需要记录原来的名字，你能获取到原名字
+                op.new_name = newName.toStdString();
+                undo_stack.push(op);
+                save_data();
+
                 refresh_file_list();
                 refresh_tree();
             } else {
@@ -681,6 +714,14 @@ void MainWindow::on_list_files_itemChanged(QListWidgetItem *item)
         return;
     }
 
+    Operation op;
+    op.type = OperationType::RENAME;
+    op.node = node;
+    op.old_name = oldName.toStdString(); // 旧名字
+    op.new_name = newName.toStdString(); // 新名字
+    undo_stack.push(op);
+
+    save_data(); // 立即保存，确保重启后撤销记录还在
     // 重命名成功后刷新界面
     refresh_file_list();
     refresh_tree();
@@ -792,6 +833,14 @@ void MainWindow::on_btn_paste_clicked()
             return;
         }
 
+        // 👇 【复制模式的撤销入栈】加在这里
+        Operation op;
+        op.type = OperationType::COPY;
+        op.node = new_node; // 记录刚刚复制出来的新节点
+        undo_stack.push(op);
+        save_data(); // 立即持久化
+        // 👆 入栈结束
+
         refresh_tree();
         refresh_file_list();
 
@@ -800,6 +849,9 @@ void MainWindow::on_btn_paste_clicked()
     }
     else if (clipboard_mode == ClipboardMode::Move)
     {
+        // 👇 【1. 必须加这一行！】在移动前，先记录下原父节点
+        FileNode* old_parent = clipboard_node->get_parent();
+
         bool success =
             file_system->move_node(
                 clipboard_node,
@@ -815,7 +867,15 @@ void MainWindow::on_btn_paste_clicked()
                 );
             return;
         }
-
+        // 👇 【移动模式的撤销入栈】加在这里
+        Operation op;
+        op.type = OperationType::MOVE;
+        op.node = clipboard_node;                  // 被移动的节点
+        op.old_parent = old_parent;                // 原父节点（刚才提前存好的）
+        op.new_parent = file_system->get_current_directory(); // 目标父节点
+        undo_stack.push(op);
+        save_data(); // 立即持久化
+        // 👆 入栈结束
         refresh_tree();
         refresh_file_list();
 
@@ -1168,24 +1228,25 @@ void MainWindow::on_btn_refresh_clicked()
 }
 
 
+
+
+
 void MainWindow::save_node_recursive(FileNode* node, std::ofstream& out) {
     if (node == nullptr) return;
 
-    // 1. 获取当前节点的路径（底层接口）
     std::string path = file_system->get_path(node);
 
-    // 2. 按格式写入： D或F | 路径 | 创建时间 | 修改时间
-
-
-    // 原来： out << ... << get_modified_time() << "\n";
-    // 改成：
+    // 写入 8 个字段
     out << (node->is_directory() ? "D" : "F") << "|"
         << path << "|"
         << node->get_created_time() << "|"
         << node->get_modified_time() << "|"
-        << (node->is_pinned() ? "1" : "0") << "\n"; // 👈 加上置顶状态
+        << (node->is_pinned() ? "1" : "0") << "|"
+        << node->get_pin_order() << "|"
+        << node->get_size() << "|"
+        << (node->is_directory() ? "" : node->get_content()) << "\n"; // 文件夹内容为空
 
-    // 3. 递归遍历子节点
+    // 递归遍历子节点
     FileNode* child = node->get_first_child();
     while (child != nullptr) {
         save_node_recursive(child, out);
@@ -1201,6 +1262,18 @@ void MainWindow::save_data() {
         return;
     }
     save_node_recursive(file_system->get_root(), out);
+    file_system->for_each_recycle_item([&](FileNode* node, const std::string& original_path){
+        out << "R|"
+            << (node->is_directory() ? "D" : "F") << "|"
+            << original_path << "|"
+            << node->get_name() << "|"
+            << node->get_created_time() << "|"
+            << node->get_modified_time() << "|"
+            << (node->is_pinned() ? "1" : "0") << "|"
+            << node->get_pin_order() << "|"
+            << node->get_size() << "|"
+            << (node->is_directory() ? "" : node->get_content()) << "\n";
+    });
     out.close();
     ui->statusbar->showMessage("数据保存成功！", 2000);
 }
@@ -1211,84 +1284,120 @@ void MainWindow::save_data() {
 
 void MainWindow::load_data() {
     std::ifstream in("data.txt");
-    if (!in.is_open()) return; // 第一次运行没有文件，直接返回，正常
+    if (!in.is_open()) return; // 第一次运行没有文件，直接返回
 
     std::string line;
     while (std::getline(in, line)) {
         if (line.empty()) continue;
 
-        // 1. 按照 '|' 分割字符串
         std::stringstream ss(line);
-        std::string type, path, c_time, m_time;
-        std::string pinned_str;
-        std::string pin_order_str;
+        std::string type;
         std::getline(ss, type, '|');
+
+        // =======================================================
+        // 👇 任务二：回收站持久化加载
+        // 格式：R|D或F|原路径|名称|创建时间|修改时间|置顶|pin_order|大小|内容
+        // =======================================================
+        if (type == "R") {
+            std::string is_dir_str, original_path, name, c_time, m_time;
+            std::string pinned_str, pin_order_str, size_str, content_str;
+
+            std::getline(ss, is_dir_str, '|');
+            std::getline(ss, original_path, '|');
+            std::getline(ss, name, '|');
+            std::getline(ss, c_time, '|');
+            std::getline(ss, m_time, '|');
+            std::getline(ss, pinned_str, '|');
+            std::getline(ss, pin_order_str, '|');
+            std::getline(ss, size_str, '|');
+            std::getline(ss, content_str, '|'); // 注意：如果内容包含 '|'，这里会有解析风险，目前假定模拟文件内容不包含 '|'
+
+            bool is_directory = (is_dir_str == "D");
+
+            // 1. 调用底层接口，创建节点并放入回收站链表（传入 nullptr 代表它是回收站顶层节点）
+            FileNode* recycledNode = file_system->create_recycle_node_for_load(
+                nullptr, name, is_directory, original_path);
+
+            if (recycledNode != nullptr) {
+                // 2. 按照文档顺序：先 set_content，再 set_metadata
+                if (!is_directory) {
+                    file_system->set_content(recycledNode, content_str);
+                }
+
+                long long size = 0;
+                try { size = std::stoll(size_str); } catch(...) { size = 0; }
+                file_system->set_metadata(recycledNode, size, c_time, m_time);
+
+                // 3. 最后恢复置顶状态（你刚才改了底层拦截，这里现在可以成功生效了！）
+                bool is_pinned = (pinned_str == "1");
+                long long pin_order = -1;
+                try { pin_order = std::stoll(pin_order_str); } catch(...) { pin_order = -1; }
+                file_system->restore_pin_state(recycledNode, is_pinned, pin_order);
+            }
+            continue; // 🚨 极其重要：跳过下面普通文件树的挂载逻辑，否则回收站节点会被挂到活动树上！
+        }
+        // =======================================================
+
+
+        // =======================================================
+        // 👇 任务一：普通文件树持久化加载
+        // 格式：D或F|路径|创建时间|修改时间|置顶|pin_order|大小|内容
+        // =======================================================
+        std::string path, c_time, m_time, pinned_str, pin_order_str, size_str, content_str;
         std::getline(ss, path, '|');
         std::getline(ss, c_time, '|');
         std::getline(ss, m_time, '|');
-        std::getline(ss,pinned_str,'|');
+        std::getline(ss, pinned_str, '|');
         std::getline(ss, pin_order_str, '|');
+        std::getline(ss, size_str, '|');
+        std::getline(ss, content_str, '|');
 
-        // 2. 跳过根节点（因为 FileSystem 构造函数已经创建了根节点）
         if (path == "/" || path.empty()) continue;
 
-        // 3. 找到父路径 (例如 /学习/C++ 的父路径是 /学习)
         size_t lastSlash = path.find_last_of('/');
         if (lastSlash == std::string::npos) continue;
         std::string parentPath = path.substr(0, lastSlash);
-        if (parentPath.empty()) parentPath = "/"; // 容错处理
+        if (parentPath.empty()) parentPath = "/";
 
         std::string name = path.substr(lastSlash + 1);
 
-        // 4. 找到父节点并创建当前节点
+        // 查找父节点
         FileNode* parentNode = file_system->find_by_path(parentPath);
-        if (parentNode == nullptr) continue; // 父节点没找到，跳过（容错）
+        if (parentNode == nullptr) continue; // 容错处理
 
-        FileNode* newNode =nullptr;
-
+        FileNode* newNode = nullptr;
         if (type == "D") {
-            newNode=file_system->create_folder(parentNode, name);
+            newNode = file_system->create_folder(parentNode, name);
         } else {
-            newNode=file_system->create_file(parentNode, name, ""); // 内容为空，因为只模拟文件信息
+            newNode = file_system->create_file(parentNode, name, "");
         }
 
-        // 🛡️ 关键：设置置顶状态
         if (newNode != nullptr) {
-            // 如果读到了 "1"，或者旧格式里没这个字段但你想兼容，就根据情况判断
-            bool is_pinned = (pinned_str == "1");
-            long long pin_order = -1;
-
-            if (!pin_order_str.empty()) {
-                try {
-                    pin_order = std::stoll(pin_order_str);
-                }
-                catch (...) {
-                    pin_order = -1;
-                }
+            // 1. 先恢复 Content（仅文件）
+            if (type == "F") {
+                file_system->set_content(newNode, content_str);
             }
 
-            file_system->restore_pin_state(
-                newNode,
-                is_pinned,
-                pin_order
-                );
+            // 2. 再恢复原始 size 和时间
+            long long size = 0;
+            try { size = std::stoll(size_str); } catch(...) { size = 0; }
+            file_system->set_metadata(newNode, size, c_time, m_time);
 
+            // 3. 最后恢复置顶状态
+            bool is_pinned = (pinned_str == "1");
+            long long pin_order = -1;
+            try { pin_order = std::stoll(pin_order_str); } catch(...) { pin_order = -1; }
+            file_system->restore_pin_state(newNode, is_pinned, pin_order);
         }
-
     }
     in.close();
 
-    // 5. 加载完成后，刷新界面
+    // 加载完成后，刷新界面
     refresh_tree();
     refresh_file_list();
-    ui->lineEdit_path->setText(
-        QString::fromStdString(
-            file_system->get_path(
-                file_system->get_current_directory()
-            )
-        )
-    );
+    ui->lineEdit_path->setText(QString::fromStdString(file_system->get_path(file_system->get_current_directory())));
 }
+
 
 
 void MainWindow::closeEvent(QCloseEvent *event) {
@@ -1428,7 +1537,11 @@ void MainWindow::on_btn_restore_clicked()
             );
         return;
     }
-
+    Operation op;
+    op.type = OperationType::RESTORE;
+    op.node = node;
+    undo_stack.push(op);
+    save_data();
     refresh_file_list();
     refresh_tree();
 }
@@ -1482,7 +1595,10 @@ void MainWindow::on_btn_permanent_delete_clicked()
             );
         return;
     }
-
+    // 👇 加上这些清理代码
+    while (!undo_stack.empty()) undo_stack.pop();
+    clipboard_node = nullptr;
+    clipboard_mode = ClipboardMode::None;
     refresh_file_list();
     refresh_tree();
 }
@@ -1517,7 +1633,112 @@ void MainWindow::on_btn_clear_recycle_clicked()
 
 
     file_system->clear_recycle_bin();
-
+    while (!undo_stack.empty()) undo_stack.pop();
+    clipboard_node = nullptr;
+    clipboard_mode = ClipboardMode::None;
     refresh_file_list();
     refresh_tree();
 }
+void MainWindow::on_btn_undo_clicked()
+{
+
+        if (undo_stack.empty()) {
+            QMessageBox::warning(this, "撤销", "没有可以撤销的操作！");
+            return;
+        }
+
+        // 1. 取出栈顶操作
+        Operation op = undo_stack.top();
+
+        // 2. 调用底层执行逆操作
+        bool success = file_system->undo(op);
+
+        if (success) {
+            // 3. 弹栈
+            undo_stack.pop();
+
+            // 4. 安全起见，强制返回根目录（因为撤销可能删除了当前目录）
+            file_system->change_directory_by_path("/");
+            refresh_tree();
+            refresh_file_list();
+            ui->lineEdit_path->setText("/");
+
+            // 5. 持久化保存
+            save_data();
+            ui->statusbar->showMessage("撤销成功！", 2000);
+        } else {
+            // 如果底层撤销失败，也要弹栈，防止死循环
+            undo_stack.pop();
+            QMessageBox::warning(this, "撤销失败", "该操作无法撤销。");
+        }
+
+}
+
+
+void MainWindow::on_btn_reset_clicked()
+{
+
+        // =======================================================
+        // 1. 第一次确认：是否确认重置
+        // =======================================================
+        QMessageBox::StandardButton reply;
+        reply = QMessageBox::question(this, "确认重置", "确定要重置文件系统吗？",
+                                      QMessageBox::Yes | QMessageBox::No);
+        if (reply != QMessageBox::Yes) {
+            return; // 用户取消
+        }
+
+        // =======================================================
+        // 2. 第二次确认：明确警告重置的严重后果，并再次确认
+        // =======================================================
+        reply = QMessageBox::warning(this, "重置警告",
+                                     "重置将清空所有文件、文件夹和回收站，且无法撤销！\n确定要继续吗？",
+                                     QMessageBox::Yes | QMessageBox::No);
+        if (reply != QMessageBox::Yes) {
+            return; // 用户取消
+        }
+
+        // =======================================================
+        // 3. 调用底层重置
+        // 底层会自动清空正常树、回收站，并将当前目录重置为根目录
+        // =======================================================
+        file_system->reset();
+
+        // =======================================================
+        // 4. 清理所有悬空指针（极其关键，防止重置后操作崩溃）
+        // 因为所有节点都被真正释放了，必须清理所有存着旧指针的地方！
+        // =======================================================
+
+        // 清空撤销栈（std::stack 没有 clear 方法，只能用 while 循环 pop）
+        while (!undo_stack.empty()) undo_stack.pop();
+
+        // 清空导航栈
+        while (!back_stack.empty()) back_stack.pop();
+        while (!forward_stack.empty()) forward_stack.pop();
+
+        // 清空访问历史
+        history_list.clear();
+
+        // 清空剪贴板（防止粘贴时访问已释放的野指针）
+        clipboard_node = nullptr;
+        clipboard_mode = ClipboardMode::None;
+
+        // 强制退出回收站模式
+        recycle_mode = false;
+
+        // =======================================================
+        // 5. 刷新界面并持久化
+        // =======================================================
+        refresh_tree();
+        refresh_file_list();
+
+        // 重置后底层已自动将目录指回 root，直接读取底层路径
+        ui->lineEdit_path->setText(QString::fromStdString(
+            file_system->get_path(file_system->get_current_directory())));
+
+        save_data(); // 将重置后的空状态立刻写入 data.txt，覆盖旧存档
+
+        QMessageBox::information(this, "重置成功", "系统已成功重置！");
+
+}
+
