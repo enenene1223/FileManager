@@ -56,18 +56,14 @@ private slots:
 
     void on_btn_refresh_clicked();
 
-    void save_data(); // 保存数据
     void save_node_recursive(FileNode* node, std::ofstream& out); // 递归辅助函数
-
-
-    void load_data();
 
     void on_btn_test_pin_clicked();//临时测试置顶功能
 
+    // 回收站
     void on_btn_restore_clicked();
     void on_btn_permanent_delete_clicked();
     void on_btn_clear_recycle_clicked();
-
 
     void on_btn_undo_clicked();
 
@@ -86,11 +82,13 @@ private:
     std::stack<Operation> undo_stack;
 
     // 辅助函数
-    void navigate_to(const std::string& path);
-    void search_recursive(FileNode* node, const QString& keyword, QList<FileNode*>& results);
+    void navigate_to(
+        const std::string& path,
+        bool refreshTree = true,
+        bool recordHistory = true
+        );
 
     void build_tree_item(FileNode* node, QTreeWidgetItem* parentItem);
-
 
     void on_btn_new_file_clicked();// 新建文件
     void on_btn_new_folder_clicked();// 新建文件夹
@@ -102,12 +100,17 @@ private:
 
     void toggle_pin(FileNode* node);
 
+    // 持久化
+    void save_data();
+    void load_data();
+
     bool recycle_mode = false;
 
     QListWidgetItem *last_clicked_item = nullptr;   //双击重命名
     qint64 last_click_time = 0;
 
     QStringList history_list;//访问记录
+    int history_replace_index = 0;
 
     enum class ClipboardMode
     {
