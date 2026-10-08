@@ -5,8 +5,10 @@
 #include <QMessageBox>
 #include <QListWidgetItem>
 
+#include <QIcon>
 #include <QMenu>
 #include <QAction>
+#include <QLineEdit>
 
 #include <QSignalBlocker>
 #include <QTimer>
@@ -34,10 +36,48 @@ MainWindow::MainWindow(QWidget *parent)
     // 生成界面
     ui->setupUi(this);
 
+    // ===============================================
+    // 目录区
+    // ===============================================
+    // 左侧目录树作为辅助导航区，右侧文件列表作为主要操作区
+    ui->tree_dir->setMinimumWidth(100);
+    ui->tree_dir->setMaximumWidth(QWIDGETSIZE_MAX);
+
+    ui->splitter_main->setStretchFactor(0, 0);
+    ui->splitter_main->setStretchFactor(1, 1);
+
+    // 默认约 20% : 80%
+    ui->splitter_main->setSizes({180, 800});
+
+    // 左侧不能被拖到完全消失
+    ui->splitter_main->setCollapsible(0, false);
+    ui->splitter_main->setCollapsible(1, false);
 
     // 左侧目录树使用两列：名称 + 置顶图标
     ui->tree_dir->setColumnCount(2);
 
+    // ===============================================
+    // 搜索栏
+    // ===============================================
+    // 搜索框提示文字
+    ui->lineEdit_search->setPlaceholderText("搜索当前目录...");
+
+    // 在搜索框右侧添加搜索图标
+    QAction *searchAction = ui->lineEdit_search->addAction(
+        QIcon::fromTheme("edit-find"),
+        QLineEdit::TrailingPosition
+        );
+
+    // 点击搜索图标，调用现有搜索功能
+    connect(searchAction, &QAction::triggered,
+            this, &MainWindow::on_btn_search_clicked);
+
+    // 按 Enter 也可以搜索
+    connect(ui->lineEdit_search, &QLineEdit::returnPressed,
+            this, &MainWindow::on_btn_search_clicked);
+
+    // 隐藏原来的独立搜索按钮
+    ui->btn_search->hide();
     QHeaderView *header = ui->tree_dir->header();
 
     header->setStretchLastSection(false);
@@ -99,6 +139,7 @@ MainWindow::MainWindow(QWidget *parent)
     ui->btn_clear_recycle->hide();
 
 }
+
 
 MainWindow::~MainWindow()
 {
@@ -210,8 +251,6 @@ void MainWindow::build_tree_item(FileNode* node, QTreeWidgetItem* parentItem) {
         child = child->get_next_sibling();
     }
 }
-
-
 
 
 void MainWindow::refresh_tree()
@@ -613,43 +652,76 @@ void MainWindow::on_btn_delete_clicked()
 
 void MainWindow::on_btn_rename_clicked()
 {
+    QListWidgetItem *item =
+        ui->list_files->currentItem();
 
-        // 1. 获取当前在右侧列表选中的项
-        QListWidgetItem *item = ui->list_files->currentItem();
-        if (item == nullptr) {
-            QMessageBox::warning(this, "提示", "请先在右侧列表中选择一个文件或文件夹！");
-            return;
-        }
+    if (item == nullptr)
+    {
+        QMessageBox::warning(
+            this,
+            "提示",
+            "请先在右侧列表中选择一个文件或文件夹！"
+            );
+        return;
+    }
 
-        // 2. 从控件中取出底层节点指针
-        FileNode* selectedNode = item->data(Qt::UserRole).value<FileNode*>();
-        if (selectedNode == nullptr) return;
+    FileNode* selectedNode =
+        item->data(Qt::UserRole)
+            .value<FileNode*>();
 
-        bool ok;
-        // 3. 弹出输入框，默认显示原名字
-        QString newName = QInputDialog::getText(this, "重命名", "请输入新名称：", QLineEdit::Normal,
-                                                QString::fromStdString(selectedNode->get_name()), &ok);
+    if (selectedNode == nullptr)
+        return;
 
-        if (ok && !newName.isEmpty()) {
-            // 4. 调用底层接口
-            bool success = file_system->rename_node(selectedNode, newName.toStdString());
+    // 必须在重命名前保存旧名称
+    const std::string oldName =
+        selectedNode->get_name();
 
-            if (success) {
-                Operation op;
-                op.type = OperationType::RENAME;
-                op.node = selectedNode;
-                op.old_name = selectedNode->get_name(); // 这里需要记录原来的名字，你能获取到原名字
-                op.new_name = newName.toStdString();
-                undo_stack.push(op);
-                save_data();
+    bool ok;
 
-                refresh_file_list();
-                refresh_tree();
-            } else {
-                QMessageBox::warning(this, "失败", "重命名失败！可能存在重名或非法字符。");
-            }
-        }
+    QString newName =
+        QInputDialog::getText(
+            this,
+            "重命名",
+            "请输入新名称：",
+            QLineEdit::Normal,
+            QString::fromStdString(oldName),
+            &ok
+            );
 
+    if (!ok || newName.trimmed().isEmpty())
+        return;
+
+    bool success =
+        file_system->rename_node(
+            selectedNode,
+            newName.toStdString()
+            );
+
+    if (success)
+    {
+        Operation op;
+        op.type = OperationType::RENAME;
+        op.node = selectedNode;
+
+        // 使用重命名前保存的名字
+        op.old_name = oldName;
+        op.new_name = newName.toStdString();
+
+        undo_stack.push(op);
+
+        save_data();
+
+        refresh_file_list();
+        refresh_tree();
+    }
+    else
+    {
+        QMessageBox::warning(
+            this,
+            "失败",
+            "重命名失败！可能存在重名或非法字符。"
+            );
+    }
 }
 
 
@@ -1214,7 +1286,19 @@ void MainWindow::on_tree_dir_itemClicked(
         file_system->get_current_directory();
 
     if (clickedNode == current)
+    {
+        // 从回收站返回当前目录时，
+        // 虽然底层目录没有变化，但右侧界面需要恢复普通目录内容
+        refresh_file_list();
+
+        ui->lineEdit_path->setText(
+            QString::fromStdString(
+                file_system->get_path(current)
+                )
+            );
+
         return;
+    }
 
     std::string targetPath =
         file_system->get_path(clickedNode);
@@ -1870,37 +1954,83 @@ void MainWindow::on_btn_clear_recycle_clicked()
 
 void MainWindow::on_btn_undo_clicked()
 {
+    if (undo_stack.empty())
+    {
+        QMessageBox::warning(
+            this,
+            "撤销",
+            "没有可以撤销的操作！"
+            );
+        return;
+    }
 
-        if (undo_stack.empty()) {
-            QMessageBox::warning(this, "撤销", "没有可以撤销的操作！");
-            return;
+    // 保存撤销前所在目录
+    std::string oldCurrentPath =
+        file_system->get_path(
+            file_system->get_current_directory()
+            );
+
+    // 取出栈顶操作
+    Operation op =
+        undo_stack.top();
+
+    // 执行逆操作
+    bool success =
+        file_system->undo(op);
+
+    if (success)
+    {
+        undo_stack.pop();
+
+        // 如果撤销前所在目录仍然存在，
+        // 就继续停留在原目录。
+        // 只有目录已经不存在时才退回根目录。
+        FileNode* oldCurrentNode =
+            file_system->find_by_path(
+                oldCurrentPath
+                );
+
+        if (oldCurrentNode != nullptr &&
+            oldCurrentNode->is_directory())
+        {
+            file_system->change_directory_by_path(
+                oldCurrentPath
+                );
         }
-
-        // 1. 取出栈顶操作
-        Operation op = undo_stack.top();
-
-        // 2. 调用底层执行逆操作
-        bool success = file_system->undo(op);
-
-        if (success) {
-            // 3. 弹栈
-            undo_stack.pop();
-
-            // 4. 安全起见，强制返回根目录（因为撤销可能删除了当前目录）
+        else
+        {
             file_system->change_directory_by_path("/");
-            refresh_tree();
-            refresh_file_list();
-            ui->lineEdit_path->setText("/");
-
-            // 5. 持久化保存
-            save_data();
-            ui->statusbar->showMessage("撤销成功！", 2000);
-        } else {
-            // 如果底层撤销失败，也要弹栈，防止死循环
-            undo_stack.pop();
-            QMessageBox::warning(this, "撤销失败", "该操作无法撤销。");
         }
 
+        refresh_tree();
+        refresh_file_list();
+
+        ui->lineEdit_path->setText(
+            QString::fromStdString(
+                file_system->get_path(
+                    file_system->get_current_directory()
+                    )
+                )
+            );
+
+        save_data();
+
+        ui->statusbar->showMessage(
+            "撤销成功！",
+            2000
+            );
+    }
+    else
+    {
+        // 防止无法撤销的操作一直卡在栈顶
+        undo_stack.pop();
+
+        QMessageBox::warning(
+            this,
+            "撤销失败",
+            "该操作无法撤销。"
+            );
+    }
 }
 
 
@@ -1938,22 +2068,45 @@ void MainWindow::on_btn_reset_clicked()
         // 因为所有节点都被真正释放了，必须清理所有存着旧指针的地方！
         // =======================================================
 
-        // 清空撤销栈（std::stack 没有 clear 方法，只能用 while 循环 pop）
-        while (!undo_stack.empty()) undo_stack.pop();
+        // 清空撤销栈
+        while (!undo_stack.empty())
+            undo_stack.pop();
 
         // 清空导航栈
-        while (!back_stack.empty()) back_stack.pop();
-        while (!forward_stack.empty()) forward_stack.pop();
+        while (!back_stack.empty())
+            back_stack.pop();
 
-        // 清空访问历史
+        while (!forward_stack.empty())
+            forward_stack.pop();
+
+        // 清空访问历史及替换状态
         history_list.clear();
+        history_replace_index = 0;
 
-        // 清空剪贴板（防止粘贴时访问已释放的野指针）
+        // 清空剪贴板
         clipboard_node = nullptr;
         clipboard_mode = ClipboardMode::None;
 
-        // 强制退出回收站模式
+        // 清除列表项相关旧指针
+        last_clicked_item = nullptr;
+        last_click_time = 0;
+
+        // 退出回收站模式
         recycle_mode = false;
+
+        // 恢复普通操作按钮
+        ui->btn_new->show();
+        ui->btn_move->show();
+        ui->btn_copy->show();
+        ui->btn_paste->show();
+        ui->btn_rename->show();
+        ui->btn_delete->show();
+        ui->btn_test_pin->show();
+
+        // 隐藏回收站操作
+        ui->btn_restore->hide();
+        ui->btn_permanent_delete->hide();
+        ui->btn_clear_recycle->hide();
 
         // =======================================================
         // 5. 刷新界面并持久化

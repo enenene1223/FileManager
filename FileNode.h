@@ -8,10 +8,11 @@ class FileSystem;
 // 文件系统中的统一节点。
 // 使用孩子-兄弟表示法：
 // parent_       -> 父节点
-// first_child_  -> 第一个子节点
-// next_sibling_ -> 同级下一个节点
+// first_child_  -> 第一个子节点（孩子）
+// next_sibling_ -> 同级下一个节点（兄弟）
 class FileNode
 {
+
 public:
     FileNode(const std::string &name, bool is_directory);
     ~FileNode();
@@ -34,6 +35,7 @@ public:
     FileNode *get_first_child() const;
     FileNode *get_next_sibling() const;
 
+
 private:
     std::string name_;
 
@@ -53,6 +55,7 @@ private:
 
     // 只有 FileSystem 负责修改树结构和节点属性。
     friend class FileSystem;
+
 };
 
 #endif // FILENODE_H

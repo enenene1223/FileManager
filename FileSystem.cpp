@@ -37,6 +37,7 @@ FileSystem::~FileSystem()
     current_directory_ = nullptr;
 }
 
+
 FileNode *FileSystem::create_file(FileNode *parent,
                                   const std::string &name,
                                   const std::string &content)
@@ -74,6 +75,7 @@ FileNode *FileSystem::create_file(FileNode *parent,
     return node;
 }
 
+
 FileNode *FileSystem::create_folder(FileNode *parent, const std::string &name)
 {
     set_error(FileSystemError::NONE);
@@ -106,6 +108,7 @@ FileNode *FileSystem::create_folder(FileNode *parent, const std::string &name)
     append_child(parent, node);
     return node;
 }
+
 
 bool FileSystem::delete_node(FileNode *node)
 {
@@ -142,6 +145,7 @@ bool FileSystem::delete_node(FileNode *node)
     return true;
 }
 
+
 bool FileSystem::restore_node(FileNode *node, FileNode *target_parent)
 {
     set_error(FileSystemError::NONE);
@@ -175,6 +179,7 @@ bool FileSystem::restore_node(FileNode *node, FileNode *target_parent)
     return true;
 }
 
+
 bool FileSystem::permanent_delete(FileNode *node)
 {
     set_error(FileSystemError::NONE);
@@ -194,6 +199,7 @@ bool FileSystem::permanent_delete(FileNode *node)
     return true;
 }
 
+
 void FileSystem::clear_recycle_bin()
 {
     RecycleEntry *entry = recycle_head_;
@@ -207,6 +213,7 @@ void FileSystem::clear_recycle_bin()
         entry = next;
     }
 }
+
 
 bool FileSystem::rename_node(FileNode *node, const std::string &new_name)
 {
@@ -273,6 +280,7 @@ bool FileSystem::move_node(FileNode *node, FileNode *target_parent)
     return true;
 }
 
+
 FileNode *FileSystem::copy_node(FileNode *node, FileNode *target_parent)
 {
     set_error(FileSystemError::NONE);
@@ -305,6 +313,7 @@ FileNode *FileSystem::copy_node(FileNode *node, FileNode *target_parent)
     return clone_subtree(node, target_parent);
 }
 
+
 FileNode *FileSystem::find_child(FileNode *parent, const std::string &name) const
 {
     if (parent == nullptr || !owns_active_node(parent) || !parent->is_directory_) {
@@ -321,6 +330,7 @@ FileNode *FileSystem::find_child(FileNode *parent, const std::string &name) cons
 
     return nullptr;
 }
+
 
 FileNode *FileSystem::find_by_path(const std::string &path) const
 {
@@ -369,10 +379,12 @@ FileNode *FileSystem::find_by_path(const std::string &path) const
     return current;
 }
 
+
 FileNode *FileSystem::get_current_directory() const
 {
     return current_directory_;
 }
+
 
 bool FileSystem::change_directory(FileNode *directory)
 {
@@ -388,11 +400,13 @@ bool FileSystem::change_directory(FileNode *directory)
     return true;
 }
 
+
 bool FileSystem::change_directory_by_path(const std::string &path)
 {
     FileNode *directory = find_by_path(path);
     return directory != nullptr && change_directory(directory);
 }
+
 
 bool FileSystem::set_content(FileNode *file, const std::string &content)
 {
@@ -414,6 +428,7 @@ bool FileSystem::set_content(FileNode *file, const std::string &content)
     return true;
 }
 
+
 const std::string &FileSystem::get_content(FileNode *file) const
 {
     static const std::string empty_content;
@@ -424,6 +439,7 @@ const std::string &FileSystem::get_content(FileNode *file) const
 
     return file->content_;
 }
+
 
 bool FileSystem::set_metadata(FileNode *node,
                               long long size,
@@ -448,6 +464,7 @@ bool FileSystem::set_metadata(FileNode *node,
     return true;
 }
 
+
 std::string FileSystem::get_path(FileNode *node) const
 {
     if (node == nullptr || !owns_active_node(node)) {
@@ -469,10 +486,12 @@ std::string FileSystem::get_path(FileNode *node) const
     return current == root_ ? path : std::string();
 }
 
+
 FileNode *FileSystem::get_root() const
 {
     return root_;
 }
+
 
 void FileSystem::traverse(FileNode *start_node, const NodeVisitor &visitor) const
 {
@@ -483,10 +502,12 @@ void FileSystem::traverse(FileNode *start_node, const NodeVisitor &visitor) cons
     traverse_recursive(start_node, visitor);
 }
 
+
 bool FileSystem::is_in_recycle_bin(FileNode *node) const
 {
     return find_recycle_entry(node) != nullptr;
 }
+
 
 std::string FileSystem::get_recycle_original_path(FileNode *node) const
 {
@@ -494,10 +515,12 @@ std::string FileSystem::get_recycle_original_path(FileNode *node) const
     return entry == nullptr ? std::string() : entry->original_path;
 }
 
+
 std::size_t FileSystem::get_recycle_count() const
 {
     return recycle_count_;
 }
+
 
 void FileSystem::for_each_recycle_item(const RecycleVisitor &visitor) const
 {
@@ -511,6 +534,7 @@ void FileSystem::for_each_recycle_item(const RecycleVisitor &visitor) const
         entry = entry->next;
     }
 }
+
 
 bool FileSystem::has_name_conflict(FileNode *parent,
                                    const std::string &name,
@@ -531,6 +555,7 @@ bool FileSystem::has_name_conflict(FileNode *parent,
     return false;
 }
 
+
 bool FileSystem::can_move(FileNode *node, FileNode *target_parent) const
 {
     if (node == nullptr || target_parent == nullptr || node == root_ || !owns_active_node(node)
@@ -545,10 +570,12 @@ bool FileSystem::can_move(FileNode *node, FileNode *target_parent) const
     return !has_name_conflict(target_parent, node->name_, node);
 }
 
+
 FileSystemError FileSystem::get_last_error() const
 {
     return last_error_;
 }
+
 
 bool FileSystem::is_valid_name(const std::string& name)
 {
@@ -567,6 +594,7 @@ bool FileSystem::is_valid_name(const std::string& name)
     return !allWhitespace;
 }
 
+
 std::string FileSystem::now_string()
 {
     const std::time_t current_time = std::time(nullptr);
@@ -581,10 +609,12 @@ std::string FileSystem::now_string()
     return stream.str();
 }
 
+
 void FileSystem::set_error(FileSystemError error)
 {
     last_error_ = error;
 }
+
 
 bool FileSystem::owns_active_node(FileNode *node) const
 {
@@ -604,6 +634,7 @@ bool FileSystem::owns_active_node(FileNode *node) const
     return current == root_;
 }
 
+
 bool FileSystem::is_descendant(FileNode *node, FileNode *possible_ancestor) const
 {
     if (node == nullptr || possible_ancestor == nullptr) {
@@ -620,6 +651,7 @@ bool FileSystem::is_descendant(FileNode *node, FileNode *possible_ancestor) cons
 
     return false;
 }
+
 
 void FileSystem::append_child(FileNode *parent, FileNode *node)
 {
@@ -644,6 +676,7 @@ void FileSystem::append_child(FileNode *parent, FileNode *node)
     current->next_sibling_ = node;
     parent->modified_time_ = now_string();
 }
+
 
 bool FileSystem::detach_node(FileNode *node)
 {
@@ -677,6 +710,7 @@ bool FileSystem::detach_node(FileNode *node)
     return true;
 }
 
+
 FileNode *FileSystem::clone_subtree(FileNode *source, FileNode *new_parent)
 {
     FileNode *copy = new FileNode(source->name_, source->is_directory_);
@@ -699,6 +733,7 @@ FileNode *FileSystem::clone_subtree(FileNode *source, FileNode *new_parent)
 
     return copy;
 }
+
 
 void FileSystem::destroy_subtree(FileNode *node)
 {
@@ -755,6 +790,7 @@ void FileSystem::remove_recycle_entry(RecycleEntry *entry)
     delete entry;
     --recycle_count_;
 }
+
 
 void FileSystem::traverse_recursive(FileNode *node, const NodeVisitor &visitor) const
 {
@@ -917,7 +953,6 @@ void FileSystem::reset()
 // =========================
 // 持久化接口
 // =========================
-
 bool FileSystem::restore_pin_state(FileNode* node,bool pinned,long long pin_order){
     set_error(FileSystemError::NONE);
 

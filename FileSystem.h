@@ -38,10 +38,10 @@ public:
     FileSystem(const FileSystem &) = delete;
     FileSystem &operator=(const FileSystem &) = delete;
 
+
     // =========================
     // 创建
     // =========================
-
     // 在指定目录下创建普通模拟文件。
     // 初始大小由 content.size() 决定。
     // 成功返回新节点；失败返回 nullptr，并可通过 get_last_error() 获取原因。
@@ -52,10 +52,10 @@ public:
     // 在指定目录下创建文件夹。
     FileNode *create_folder(FileNode *parent, const std::string &name);
 
+
     // =========================
     // 基本文件操作
     // =========================
-
     // 查看目录
     FileNode *get_current_directory() const;
 
@@ -93,10 +93,10 @@ public:
     // 递归深拷贝整个子树。
     FileNode *copy_node(FileNode *node, FileNode *target_parent);
 
+
     // =========================
     // 查找
     // =========================
-
     FileNode *find_child(FileNode *parent, const std::string &name) const;
 
     // 路径规则：
@@ -116,17 +116,16 @@ public:
     // =========================
     // 文件内容
     // =========================
-
     // 只有普通文件允许设置内容。
     // 会同步更新大小与修改时间。
     bool set_content(FileNode *file, const std::string &content);
 
     const std::string &get_content(FileNode *file) const;
 
+
     // =========================
     // 属性 / 持久化
     // =========================
-
     // 用于持久化模块恢复节点属性。
     // size 必须 >= 0；空时间字符串会被替换为当前时间。
     bool set_metadata(FileNode *node,
@@ -138,7 +137,6 @@ public:
     // =========================
     // 路径与根目录
     // =========================
-
     // 活动树中的节点返回其当前完整路径；回收站节点应使用
     // get_recycle_original_path() 获取删除前路径。
     std::string get_path(FileNode *node) const;
@@ -149,7 +147,6 @@ public:
     // =========================
     // 回收站
     // =========================
-
     bool is_in_recycle_bin(FileNode *node) const;
 
     std::string get_recycle_original_path(FileNode *node) const;
@@ -169,7 +166,6 @@ public:
     // =========================
     // 合法性检查
     // =========================
-
     bool has_name_conflict(FileNode *parent,
                            const std::string &name,
                            FileNode *ignore_node = nullptr) const;
@@ -180,14 +176,12 @@ public:
     // =========================
     // 错误信息
     // =========================
-
     FileSystemError get_last_error() const;
 
 
     // =========================
     // 撤销
     // =========================
-
     // operation 由上层撤销模块从 OperationStack 中取出。
     // FileSystem 负责执行对应的逆操作。
     bool undo(const Operation &operation);
@@ -196,9 +190,9 @@ public:
     // =========================
     // 重置整个虚拟文件系统
     // =========================
-
     // 清空正常文件树和回收站，保留根节点。
     void reset();
+
 
 private:
     struct RecycleEntry

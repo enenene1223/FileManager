@@ -6,7 +6,7 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>800</width>
+    <width>984</width>
     <height>600</height>
    </rect>
   </property>
@@ -14,13 +14,25 @@
    <string>MainWindow</string>
   </property>
   <widget class="QWidget" name="centralwidget">
-   <layout class="QVBoxLayout" name="verticalLayout">
+   <layout class="QVBoxLayout" name="verticalLayout" stretch="0,0,1">
     <item>
-     <layout class="QHBoxLayout" name="horizontalLayout_2">
+     <layout class="QHBoxLayout" name="horizontalLayout_1">
       <item>
        <widget class="QPushButton" name="btn_back">
         <property name="enabled">
          <bool>true</bool>
+        </property>
+        <property name="minimumSize">
+         <size>
+          <width>42</width>
+          <height>28</height>
+         </size>
+        </property>
+        <property name="maximumSize">
+         <size>
+          <width>42</width>
+          <height>28</height>
+         </size>
         </property>
         <property name="text">
          <string>←</string>
@@ -29,6 +41,18 @@
       </item>
       <item>
        <widget class="QPushButton" name="btn_forward">
+        <property name="minimumSize">
+         <size>
+          <width>42</width>
+          <height>28</height>
+         </size>
+        </property>
+        <property name="maximumSize">
+         <size>
+          <width>42</width>
+          <height>28</height>
+         </size>
+        </property>
         <property name="text">
          <string>→</string>
         </property>
@@ -36,6 +60,18 @@
       </item>
       <item>
        <widget class="QPushButton" name="btn_up">
+        <property name="minimumSize">
+         <size>
+          <width>42</width>
+          <height>28</height>
+         </size>
+        </property>
+        <property name="maximumSize">
+         <size>
+          <width>42</width>
+          <height>28</height>
+         </size>
+        </property>
         <property name="text">
          <string>↑</string>
         </property>
@@ -43,19 +79,51 @@
       </item>
       <item>
        <widget class="QPushButton" name="btn_refresh">
+        <property name="minimumSize">
+         <size>
+          <width>42</width>
+          <height>28</height>
+         </size>
+        </property>
+        <property name="maximumSize">
+         <size>
+          <width>42</width>
+          <height>28</height>
+         </size>
+        </property>
         <property name="text">
          <string>⟳</string>
         </property>
        </widget>
       </item>
       <item>
-       <widget class="QLineEdit" name="lineEdit_path"/>
+       <widget class="QLineEdit" name="lineEdit_path">
+        <property name="maximumSize">
+         <size>
+          <width>16777215</width>
+          <height>30</height>
+         </size>
+        </property>
+       </widget>
       </item>
       <item>
-       <widget class="QLineEdit" name="lineEdit_search"/>
+       <widget class="QLineEdit" name="lineEdit_search">
+        <property name="maximumSize">
+         <size>
+          <width>200</width>
+          <height>30</height>
+         </size>
+        </property>
+       </widget>
       </item>
       <item>
        <widget class="QPushButton" name="btn_search">
+        <property name="maximumSize">
+         <size>
+          <width>40</width>
+          <height>30</height>
+         </size>
+        </property>
         <property name="text">
          <string>搜索</string>
         </property>
@@ -64,9 +132,15 @@
      </layout>
     </item>
     <item>
-     <layout class="QHBoxLayout" name="horizontalLayout">
+     <layout class="QHBoxLayout" name="horizontalLayout_2">
       <item>
        <widget class="QToolButton" name="btn_new">
+        <property name="maximumSize">
+         <size>
+          <width>84</width>
+          <height>28</height>
+         </size>
+        </property>
         <property name="text">
          <string>新建</string>
         </property>
@@ -77,6 +151,12 @@
       </item>
       <item>
        <widget class="QPushButton" name="btn_move">
+        <property name="maximumSize">
+         <size>
+          <width>42</width>
+          <height>28</height>
+         </size>
+        </property>
         <property name="text">
          <string>移动</string>
         </property>
@@ -84,6 +164,12 @@
       </item>
       <item>
        <widget class="QPushButton" name="btn_copy">
+        <property name="maximumSize">
+         <size>
+          <width>42</width>
+          <height>28</height>
+         </size>
+        </property>
         <property name="text">
          <string>复制</string>
         </property>
@@ -91,6 +177,12 @@
       </item>
       <item>
        <widget class="QPushButton" name="btn_paste">
+        <property name="maximumSize">
+         <size>
+          <width>42</width>
+          <height>28</height>
+         </size>
+        </property>
         <property name="text">
          <string>粘贴</string>
         </property>
@@ -98,6 +190,12 @@
       </item>
       <item>
        <widget class="QPushButton" name="btn_rename">
+        <property name="maximumSize">
+         <size>
+          <width>42</width>
+          <height>28</height>
+         </size>
+        </property>
         <property name="text">
          <string>重命名</string>
         </property>
@@ -105,6 +203,12 @@
       </item>
       <item>
        <widget class="QPushButton" name="btn_delete">
+        <property name="maximumSize">
+         <size>
+          <width>42</width>
+          <height>28</height>
+         </size>
+        </property>
         <property name="text">
          <string>删除</string>
         </property>
@@ -155,20 +259,28 @@
      </layout>
     </item>
     <item>
-     <layout class="QHBoxLayout" name="horizontalLayout_3">
-      <item>
-       <widget class="QTreeWidget" name="tree_dir">
-        <column>
-         <property name="text">
-          <string notr="true">1</string>
-         </property>
-        </column>
-       </widget>
-      </item>
-      <item>
-       <widget class="QListWidget" name="list_files"/>
-      </item>
-     </layout>
+     <widget class="QSplitter" name="splitter_main">
+      <property name="orientation">
+       <enum>Qt::Orientation::Horizontal</enum>
+      </property>
+      <widget class="QTreeWidget" name="tree_dir">
+       <property name="minimumSize">
+        <size>
+         <width>100</width>
+         <height>0</height>
+        </size>
+       </property>
+       <attribute name="headerDefaultSectionSize">
+        <number>100</number>
+       </attribute>
+       <column>
+        <property name="text">
+         <string notr="true">1</string>
+        </property>
+       </column>
+      </widget>
+      <widget class="QListWidget" name="list_files"/>
+     </widget>
     </item>
    </layout>
   </widget>
@@ -177,8 +289,8 @@
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>800</width>
-     <height>18</height>
+     <width>984</width>
+     <height>22</height>
     </rect>
    </property>
   </widget>
