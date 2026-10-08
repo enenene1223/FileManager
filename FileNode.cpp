@@ -32,7 +32,7 @@ bool FileNode::is_pinned() const
 }
 
 void FileNode::set_pinned(bool pinned) {
-    pinned_ = pinned; // 如果队友的变量名是 pinned_，就改成 pinned_ = pinned;
+    pinned_ = pinned;
 }
 
 long long FileNode::get_size() const
