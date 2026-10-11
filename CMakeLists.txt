@@ -18,9 +18,13 @@ qt_add_executable(FileManager
     FileSystem.cpp
     Operation.h
     Operation.cpp
+
+    icons.qrc
 )
 
 target_compile_features(FileManager PRIVATE cxx_std_17)
+
+set(CMAKE_AUTORCC ON)
 
 qt_add_translations(
     TARGETS FileManager
