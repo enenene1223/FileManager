@@ -10,6 +10,7 @@
 #include <QList>
 #include <iosfwd>
 #include <QListWidgetItem>
+#include <QTimer>
 #include <QTreeWidgetItem>
 #include <QStringList>
 #include "Operation.h"
@@ -51,8 +52,7 @@ private slots:
     void on_tree_dir_itemClicked(QTreeWidgetItem *item, int column);
 
     void on_btn_copy_clicked();
-    void on_btn_move_clicked();
-    void on_btn_paste_clicked();
+    void on_btn_cut_clicked();    void on_btn_paste_clicked();
 
     void on_btn_refresh_clicked();
 
@@ -108,8 +108,12 @@ private:
 
     bool recycle_mode = false;
 
+    // 删除选中文件或文件夹
+    void delete_selected_item(bool needConfirm);
+
     QListWidgetItem *last_clicked_item = nullptr;   //双击重命名
     qint64 last_click_time = 0;
+    QTimer *rename_click_timer = nullptr;
 
     QStringList history_list;//访问记录
     int history_replace_index = 0;
@@ -118,11 +122,12 @@ private:
     {
         None,
         Copy,
-        Move
+        Cut
     };
 
     FileNode *clipboard_node = nullptr;
     ClipboardMode clipboard_mode = ClipboardMode::None;
 
 };
+
 #endif // MAINWINDOW_H

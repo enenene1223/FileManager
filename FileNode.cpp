@@ -4,6 +4,7 @@ FileNode::FileNode(const std::string &name, bool is_directory)
     : name_(name)
     , is_directory_(is_directory)
     , pinned_(false)
+    , is_locked_(false)
     , size_(0)
     , pin_order_(-1)
     , created_time_()
@@ -29,6 +30,11 @@ bool FileNode::is_directory() const
 bool FileNode::is_pinned() const
 {
     return pinned_;
+}
+
+bool FileNode::is_locked() const
+{
+    return is_locked_;
 }
 
 void FileNode::set_pinned(bool pinned) {
