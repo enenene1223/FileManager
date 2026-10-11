@@ -27,6 +27,24 @@
 #include <QHeaderView>
 
 #include <utility>
+#include <functional>
+
+#include <QShortcut> // 快捷键
+#include <QKeySequence>
+
+#include <QWidgetAction>// 右键菜单
+#include <QHBoxLayout>
+#include <QCursor>
+#include <QStyle>
+
+// 路径显示
+static QString toDisplayPath(const QString& path)
+{
+    if (path == "/")
+        return "/此电脑";
+
+    return "/此电脑" + path;
+}
 
 
 MainWindow::MainWindow(QWidget *parent)
@@ -88,10 +106,163 @@ MainWindow::MainWindow(QWidget *parent)
     ui->tree_dir->setHeaderHidden(true);
 
 
+    // ===============================================
+    // 双击重命名
+    // ===============================================
     // 关闭 QListWidget 默认的双击编辑，
     // 只允许我们在“新建”完成后主动进入重命名状态
     ui->list_files->setEditTriggers(QAbstractItemView::NoEditTriggers);
 
+    // 两次间隔较长的单击才可能是重命名；延迟执行，以便双击事件取消它。
+    rename_click_timer = new QTimer(this);
+    rename_click_timer->setSingleShot(true);
+    connect(rename_click_timer, &QTimer::timeout, this, [this]() {
+        QListWidgetItem *item = last_clicked_item;
+        if (!recycle_mode && item != nullptr &&
+            ui->list_files->currentItem() == item &&
+            (item->flags() & Qt::ItemIsEditable)) {
+            ui->list_files->editItem(item);
+        }
+        last_clicked_item = nullptr;
+        last_click_time = 0;
+    });
+
+    // ===============================================
+    // 路径栏
+    // ===============================================
+    // 路径栏按 Enter 后执行路径跳转
+    connect(ui->lineEdit_path, &QLineEdit::returnPressed,
+            this, [this]() {
+
+                // 回收站不是普通文件夹路径
+                if (recycle_mode) {
+                    QMessageBox::information(
+                        this, "提示",
+                        "请先从左侧目录树进入普通文件夹。"
+                        );
+                    ui->lineEdit_path->setText("回收站");
+                    return;
+                }
+
+                // 当前实际路径
+                std::string currentPath =
+                    file_system->get_path(
+                        file_system->get_current_directory()
+                        );
+
+                // 获取用户输入并去除首尾空白
+                QString input =
+                    ui->lineEdit_path->text().trimmed();
+
+                // 路径为空
+                if (input.isEmpty()) {
+                    QMessageBox::warning(
+                        this, "路径错误",
+                        "路径不能为空！"
+                        );
+
+                    ui->lineEdit_path->setText(
+                        toDisplayPath(QString::fromStdString(currentPath))
+                        );
+                    return;
+                }
+
+                // 统一使用 / 作为分隔符
+                input.replace('\\', '/');
+
+                // 将显示路径转换为底层真实路径
+                if (input == "/此电脑") {
+                    input = "/";
+                }
+                else if (input.startsWith("/此电脑/")) {
+                    input.remove(0, QString("/此电脑").length());
+                }
+
+                std::string targetPath = input.toStdString();
+
+                // 只接受绝对路径
+                if (targetPath.front() != '/') {
+                    QMessageBox::warning(
+                        this, "路径错误",
+                        "请输入以 / 开头的完整路径！"
+                        );
+
+                    ui->lineEdit_path->setText(
+                        toDisplayPath(QString::fromStdString(currentPath))
+                        );
+                    return;
+                }
+
+                // 检查路径是否存在
+                FileNode* targetNode =
+                    file_system->find_by_path(targetPath);
+
+                if (targetNode == nullptr) {
+                    QMessageBox::warning(
+                        this, "路径不存在",
+                        "找不到指定路径：\n" + input
+                        );
+
+                    ui->lineEdit_path->setText(
+                        toDisplayPath(QString::fromStdString(currentPath))
+                        );
+                    return;
+                }
+
+                // 检查是否为文件夹
+                if (!targetNode->is_directory()) {
+                    QMessageBox::warning(
+                        this, "无法跳转",
+                        "目标路径是文件，不是文件夹！"
+                        );
+
+                    ui->lineEdit_path->setText(
+                        toDisplayPath(QString::fromStdString(currentPath))
+                        );
+                    return;
+                }
+
+                // 获取规范化后的目标路径
+                // 例如 /A/../B 会变成 /B
+                std::string normalizedPath =
+                    file_system->get_path(targetNode);
+
+                // 若已经在目标目录，不产生新的历史记录
+                if (normalizedPath == currentPath) {
+                    ui->lineEdit_path->setText(
+                        toDisplayPath(QString::fromStdString(currentPath))
+                        );
+                    return;
+                }
+
+                // 保存当前位置到后退栈
+                back_stack.push(currentPath);
+
+                // 新导航清空前进栈
+                while (!forward_stack.empty()) {
+                    forward_stack.pop();
+                }
+
+                // 复用原有统一导航函数
+                navigate_to(normalizedPath);
+
+                ui->statusbar->showMessage(
+                    "已跳转至：" +
+                        QString::fromStdString(normalizedPath),
+                    3000
+                    );
+            });
+
+    // 路径栏提示文字
+    ui->lineEdit_path->setPlaceholderText(
+        "输入文件夹绝对路径，按 Enter 跳转"
+        );
+
+    // 鼠标悬停提示
+    ui->lineEdit_path->setToolTip(
+        "支持输入虚拟文件系统路径，例如：/学习/计算机网络\n"
+        "按 Enter 跳转，路径不存在时不会改变当前位置。"
+        );
 
     // 初始化底层系统
     file_system = new FileSystem();
@@ -104,10 +275,10 @@ MainWindow::MainWindow(QWidget *parent)
     refresh_file_list();
 
     ui->lineEdit_path->setText(
-        QString::fromStdString(
+        toDisplayPath(QString::fromStdString(
             file_system->get_path(file_system->get_current_directory())
-        )
-    );
+            ))
+        );
 
 
     // 新建的下拉菜单
@@ -138,6 +309,343 @@ MainWindow::MainWindow(QWidget *parent)
     ui->btn_permanent_delete->hide();
     ui->btn_clear_recycle->hide();
 
+
+    // ===============================================
+    // 快捷键系统
+    // ===============================================
+    // F2：重命名
+    auto* renameShortcut =
+        new QShortcut(QKeySequence(Qt::Key_F2), ui->list_files);
+
+    renameShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+
+    connect(renameShortcut, &QShortcut::activated,
+            this, [this]() {
+                if (!recycle_mode &&
+                    ui->list_files->hasFocus())
+                    on_btn_rename_clicked();
+            });
+
+    // Ctrl+C：复制
+    auto* copyShortcut =
+        new QShortcut(QKeySequence::Copy, ui->list_files);
+
+    copyShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+
+    connect(copyShortcut, &QShortcut::activated,
+            this, [this]() {
+                if (!recycle_mode &&
+                    ui->list_files->hasFocus())
+                    on_btn_copy_clicked();
+            });
+
+    // Ctrl+X：剪切
+    auto* cutShortcut =
+        new QShortcut(QKeySequence::Cut, ui->list_files);
+
+    cutShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+
+    connect(cutShortcut, &QShortcut::activated,
+            this, [this]() {
+                if (!recycle_mode &&
+                    ui->list_files->hasFocus())
+                    on_btn_cut_clicked();
+            });
+
+    // Ctrl+V：粘贴
+    auto* pasteShortcut =
+        new QShortcut(QKeySequence::Paste, ui->list_files);
+
+    pasteShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+
+    connect(pasteShortcut, &QShortcut::activated,
+            this, [this]() {
+                if (!recycle_mode &&
+                    ui->list_files->hasFocus())
+                    on_btn_paste_clicked();
+            });
+
+    // Ctrl+D：删除
+    auto* deleteShortcut =
+        new QShortcut(
+            QKeySequence(Qt::CTRL | Qt::Key_D), ui->list_files);
+
+    deleteShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+
+    connect(deleteShortcut, &QShortcut::activated,
+            this, [this]() {
+                if (!recycle_mode &&
+                    ui->list_files->hasFocus())
+                {
+                    // Ctrl+D 直接删除，不弹确认窗口
+                    delete_selected_item(false);
+                }
+            });
+
+    // Ctrl+Z：撤销
+    auto* undoShortcut =
+        new QShortcut(QKeySequence::Undo, ui->list_files);
+
+    undoShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+
+    connect(undoShortcut, &QShortcut::activated,
+            this, [this]() {
+                if (!recycle_mode &&
+                    ui->list_files->hasFocus())
+                    on_btn_undo_clicked();
+            });
+
+
+
+    // ===============================================
+    // 右键菜单
+    // ===============================================
+    ui->list_files->setContextMenuPolicy(
+        Qt::CustomContextMenu);
+
+    connect(ui->list_files,
+            &QListWidget::customContextMenuRequested,
+            this, [this](const QPoint& pos)
+            {
+                // 先取消可能正在等待的重命名
+                rename_click_timer->stop();
+                last_clicked_item = nullptr;
+                last_click_time = 0;
+
+                QListWidgetItem* item =
+                    ui->list_files->itemAt(pos);
+
+                // 右键选中鼠标所在的项目
+                if (item != nullptr)
+                {
+                    ui->list_files->setCurrentItem(item);
+                }
+                else
+                {
+                    // 右键空白处：清除原来的选中状态
+                    ui->list_files->clearSelection();
+                    ui->list_files->setCurrentItem(nullptr);
+                }
+
+                QMenu menu(this);
+
+                // ===========================================
+                // 场景一：普通目录空白处
+                // ===========================================
+                if (!recycle_mode && item == nullptr)
+                {
+                    QMenu* sortMenu = menu.addMenu("排序方式");
+
+                    // 排序功能下一步接入
+                    QAction* sortName =
+                        sortMenu->addAction("按名称排序");
+                    sortName->setEnabled(false);
+
+                    menu.addSeparator();
+
+                    menu.addAction("刷新", this,
+                                   &MainWindow::on_btn_refresh_clicked);
+
+                    QAction* pasteAction =
+                        menu.addAction("粘贴", this,
+                                       &MainWindow::on_btn_paste_clicked);
+
+                    pasteAction->setEnabled(
+                        clipboard_node != nullptr &&
+                        clipboard_mode != ClipboardMode::None);
+
+                    QAction* undoAction =
+                        menu.addAction("撤销", this,
+                                       &MainWindow::on_btn_undo_clicked);
+
+                    undoAction->setEnabled(!undo_stack.empty());
+
+                    menu.addSeparator();
+
+                    QMenu* newMenu = menu.addMenu("新建");
+
+                    newMenu->addAction("文件",
+                                       this,
+                                       &MainWindow::on_btn_new_file_clicked);
+
+                    newMenu->addAction("文件夹",
+                                       this,
+                                       &MainWindow::on_btn_new_folder_clicked);
+                }
+
+                // ===========================================
+                // 场景二：普通目录选中项目
+                // ===========================================
+                else if (!recycle_mode && item != nullptr)
+                {
+                    FileNode* node =
+                        item->data(Qt::UserRole).value<FileNode*>();
+
+                    if (node == nullptr)
+                        return;
+
+                    // 横排快捷操作区域
+                    QWidgetAction* toolbarAction =
+                        new QWidgetAction(&menu);
+
+                    QWidget* toolbar = new QWidget(&menu);
+                    QHBoxLayout* layout =
+                        new QHBoxLayout(toolbar);
+
+                    layout->setContentsMargins(4, 4, 4, 4);
+                    layout->setSpacing(6);
+
+                    // 创建横排操作按钮
+                    auto addTool = [&](const QString& text,
+                                       QStyle::StandardPixmap iconType,
+                                       auto callback)
+                    {
+                        QToolButton* button =
+                            new QToolButton(toolbar);
+
+                        button->setText(text);
+                        button->setIcon(
+                            style()->standardIcon(iconType));
+
+                        button->setToolButtonStyle(
+                            Qt::ToolButtonTextUnderIcon);
+
+                        button->setAutoRaise(true);
+                        button->setMinimumWidth(56);
+
+                        layout->addWidget(button);
+
+                        connect(button, &QToolButton::clicked,
+                                this, [&, callback]()
+                                {
+                                    menu.close();
+                                    callback();
+                                });
+                    };
+
+                    addTool("剪切",
+                            QStyle::SP_DialogSaveButton,
+                            [this]() {
+                                on_btn_cut_clicked();
+                            });
+
+                    addTool("复制",
+                            QStyle::SP_FileIcon,
+                            [this]() {
+                                on_btn_copy_clicked();
+                            });
+
+                    addTool("重命名",
+                            QStyle::SP_FileDialogDetailedView,
+                            [this]() {
+                                on_btn_rename_clicked();
+                            });
+
+                    addTool("删除",
+                            QStyle::SP_TrashIcon,
+                            [this]() {
+                                on_btn_delete_clicked();
+                            });
+
+                    toolbarAction->setDefaultWidget(toolbar);
+                    menu.addAction(toolbarAction);
+
+                    menu.addSeparator();
+
+                    QAction* openAction =
+                        menu.addAction("打开");
+
+                    connect(openAction, &QAction::triggered,
+                            this, [this, node]()
+                            {
+                                if (!node->is_directory())
+                                {
+                                    QMessageBox::information(
+                                        this, "提示",
+                                        "当前尚不支持打开文件内容。");
+                                    return;
+                                }
+
+                                std::string currentPath =
+                                    file_system->get_path(
+                                        file_system->get_current_directory());
+
+                                std::string targetPath =
+                                    file_system->get_path(node);
+
+                                if (currentPath == targetPath)
+                                    return;
+
+                                back_stack.push(currentPath);
+
+                                while (!forward_stack.empty())
+                                    forward_stack.pop();
+
+                                navigate_to(targetPath);
+                            });
+
+                    // 仅文件夹显示固定操作
+                    if (node->is_directory())
+                    {
+                        QAction* pinAction = menu.addAction(
+                            node->is_pinned()
+                                ? "取消固定"
+                                : "固定");
+
+                        connect(pinAction, &QAction::triggered,
+                                this, [this, node]()
+                                {
+                                    toggle_pin(node);
+                                    save_data();
+                                });
+                    }
+
+                    menu.addSeparator();
+
+                    // 属性面板下一步接入
+                    QAction* propertyAction =
+                        menu.addAction("属性");
+                    propertyAction->setEnabled(false);
+                }
+
+                // ===========================================
+                // 场景三：回收站空白处
+                // ===========================================
+                else if (recycle_mode && item == nullptr)
+                {
+                    QMenu* sortMenu = menu.addMenu("排序方式");
+
+                    QAction* sortName =
+                        sortMenu->addAction("按名称排序");
+                    sortName->setEnabled(false);
+
+                    menu.addSeparator();
+
+                    menu.addAction("清空回收站",
+                                   this,
+                                   &MainWindow::on_btn_clear_recycle_clicked);
+                }
+
+                // ===========================================
+                // 场景四：回收站选中项目
+                // ===========================================
+                else if (recycle_mode && item != nullptr)
+                {
+                    menu.addAction("永久删除",
+                                   this,
+                                   &MainWindow::on_btn_permanent_delete_clicked);
+
+                    menu.addAction("还原",
+                                   this,
+                                   &MainWindow::on_btn_restore_clicked);
+                }
+
+                // 在鼠标点击位置弹出菜单
+                menu.exec(
+                    ui->list_files->viewport()->mapToGlobal(pos));
+            });
+
+
 }
 
 
@@ -147,8 +655,10 @@ MainWindow::~MainWindow()
     delete file_system; // 记得释放内存
 }
 
+
 void MainWindow::refresh_file_list()
 {
+    if (rename_click_timer) rename_click_timer->stop();
     last_clicked_item = nullptr;
     last_click_time = 0;
 
@@ -603,125 +1113,92 @@ void MainWindow::on_btn_new_file_clicked()
 }
 
 
+void MainWindow::delete_selected_item(bool needConfirm)
+{
+    if (recycle_mode)
+        return;
+
+    QListWidgetItem* item = ui->list_files->currentItem();
+
+    if (item == nullptr) {
+        QMessageBox::warning(
+            this, "提示",
+            "请先选择要删除的文件或文件夹！");
+        return;
+    }
+
+    FileNode* selectedNode =
+        item->data(Qt::UserRole).value<FileNode*>();
+
+    if (selectedNode == nullptr)
+        return;
+
+    // 只有要求确认时才显示弹窗
+    if (needConfirm) {
+        auto reply = QMessageBox::question(
+            this,
+            "确认删除",
+            "确定要删除选中的项吗？（将移入回收站）",
+            QMessageBox::Yes | QMessageBox::No,
+            QMessageBox::No
+            );
+
+        if (reply != QMessageBox::Yes)
+            return;
+    }
+
+    FileNode* oldParent = selectedNode->get_parent();
+
+    if (!file_system->delete_node(selectedNode)) {
+        QMessageBox::warning(
+            this, "删除失败",
+            "无法删除选中的文件或文件夹！");
+        return;
+    }
+
+    Operation op;
+    op.type = OperationType::DELETE;
+    op.node = selectedNode;
+    op.old_parent = oldParent;
+
+    undo_stack.push(op);
+
+    save_data();
+    refresh_file_list();
+    refresh_tree();
+}
+
 void MainWindow::on_btn_delete_clicked()
 {
-
-
-        // 1. 获取当前选中的项
-        QListWidgetItem *item = ui->list_files->currentItem();
-
-        if (item == nullptr) {
-            QMessageBox::warning(
-                this,
-                "提示",
-                "请先选择要删除的文件或文件夹！"
-            );
-            return;
-        }
-
-        // 2. 取出底层节点指针
-        FileNode* selectedNode = item->data(Qt::UserRole).value<FileNode*>();
-        if (selectedNode == nullptr) return;
-
-        // 3. 二次确认，防止用户误点
-        QMessageBox::StandardButton reply;
-        reply = QMessageBox::question(this, "确认删除",
-                                      "确定要删除选中的项吗？(将移入回收站)",
-                                      QMessageBox::Yes | QMessageBox::No);
-
-        if (reply == QMessageBox::Yes) {
-            // 4. 调用底层 delete_node (放入回收站)
-            bool success = file_system->delete_node(selectedNode);
-
-            if (success) {
-                Operation op;
-                op.type = OperationType::DELETE;
-                op.node = selectedNode;
-                op.old_parent = file_system->get_current_directory();
-                undo_stack.push(op);
-                save_data();
-                refresh_file_list();
-                refresh_tree();
-            } else {
-                QMessageBox::warning(this, "失败", "删除失败！可能是根目录不可删除。");
-            }
-        }
-
+    // 工具栏按钮仍保留确认
+    delete_selected_item(true);
 }
 
 
 void MainWindow::on_btn_rename_clicked()
 {
-    QListWidgetItem *item =
-        ui->list_files->currentItem();
+    if (recycle_mode)
+        return;
 
-    if (item == nullptr)
-    {
+    QListWidgetItem* item = ui->list_files->currentItem();
+
+    if (item == nullptr) {
         QMessageBox::warning(
-            this,
-            "提示",
-            "请先在右侧列表中选择一个文件或文件夹！"
-            );
+            this, "提示",
+            "请先选择要重命名的文件或文件夹！");
         return;
     }
 
-    FileNode* selectedNode =
-        item->data(Qt::UserRole)
-            .value<FileNode*>();
-
-    if (selectedNode == nullptr)
+    if (!(item->flags() & Qt::ItemIsEditable))
         return;
 
-    // 必须在重命名前保存旧名称
-    const std::string oldName =
-        selectedNode->get_name();
+    // 避免与慢速单击重命名计时器冲突
+    rename_click_timer->stop();
+    last_clicked_item = nullptr;
+    last_click_time = 0;
 
-    bool ok;
-
-    QString newName =
-        QInputDialog::getText(
-            this,
-            "重命名",
-            "请输入新名称：",
-            QLineEdit::Normal,
-            QString::fromStdString(oldName),
-            &ok
-            );
-
-    if (!ok || newName.trimmed().isEmpty())
-        return;
-
-    bool success =
-        file_system->rename_node(
-            selectedNode,
-            newName.toStdString()
-            );
-
-    if (success)
-    {
-        Operation op;
-        op.type = OperationType::RENAME;
-        op.node = selectedNode;
-
-        // 使用重命名前保存的名字
-        op.old_name = oldName;
-        op.new_name = newName.toStdString();
-
-        undo_stack.push(op);
-
-        save_data();
-
-        refresh_file_list();
-        refresh_tree();
-    }
-    else
-    {
-        QMessageBox::warning(
-            this,
-            "失败",
-            "重命名失败！可能存在重名或非法字符。"
-            );
-    }
+    // 启动行内编辑
+    ui->list_files->editItem(item);
 }
 
 
@@ -799,47 +1276,33 @@ void MainWindow::on_list_files_itemChanged(QListWidgetItem *item)
     // 如果改的是当前目录或者其他可能影响路径显示的节点，
     // 同步刷新当前路径栏
     ui->lineEdit_path->setText(
-        QString::fromStdString(
-            file_system->get_path(
-                file_system->get_current_directory()
-                )
-            )
+        toDisplayPath(QString::fromStdString(
+            file_system->get_path(file_system->get_current_directory())
+            ))
         );
 }
 
 
 void MainWindow::on_list_files_itemPressed(QListWidgetItem *item)
 {
-    if (item == nullptr)
-        return;
-
-    // 回收站中的项目禁止通过单击进入重命名
-    if (recycle_mode)
-    {
+    // itemPressed 也会在双击的第一下触发，不能在这里直接 editItem。
+    rename_click_timer->stop();
+    if (item == nullptr || recycle_mode) {
         last_clicked_item = nullptr;
         last_click_time = 0;
         return;
     }
 
-    qint64 current_time =
-        QDateTime::currentMSecsSinceEpoch();
-
-    // 如果是同一个项目，并且距离上一次点击
-    // 已经超过双击时间间隔，认为是“再次点击重命名”
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
     if (last_clicked_item == item &&
-        current_time - last_click_time > QApplication::doubleClickInterval())
-    {
-        ui->list_files->editItem(item);
-
-        // 重置，避免连续误触发
-        last_clicked_item = nullptr;
-        last_click_time = 0;
+        now - last_click_time > QApplication::doubleClickInterval()) {
+        // 暂缓重命名：如果这实际上是双击，doubleClicked 会取消计时器。
+        rename_click_timer->start(QApplication::doubleClickInterval() + 50);
         return;
     }
 
-    // 第一次点击，或者点击了其他项目
     last_clicked_item = item;
-    last_click_time = current_time;
+    last_click_time = now;
 }
 
 
@@ -862,7 +1325,7 @@ void MainWindow::on_btn_copy_clicked()
 }
 
 
-void MainWindow::on_btn_move_clicked()
+void MainWindow::on_btn_cut_clicked()
 {
     QListWidgetItem *item = ui->list_files->currentItem();
 
@@ -876,84 +1339,297 @@ void MainWindow::on_btn_move_clicked()
         return;
 
     clipboard_node = node;
-    clipboard_mode = ClipboardMode::Move;
+    clipboard_mode = ClipboardMode::Cut;
 }
+
 
 
 void MainWindow::on_btn_paste_clicked()
 {
-    if (clipboard_node == nullptr)
+    if (clipboard_node == nullptr ||
+        clipboard_mode == ClipboardMode::None)
         return;
 
-    if (clipboard_mode == ClipboardMode::Copy)
+    FileNode* source = clipboard_node;
+    FileNode* target = file_system->get_current_directory();
+
+    const bool isCopy = (clipboard_mode == ClipboardMode::Copy);
+
+    // 1. 检查剪贴板源节点是否仍在活动文件树中
+    bool sourceExists = false;
+
+    file_system->traverse(
+        file_system->get_root(),
+        [&](FileNode* node) {
+            if (node == source)
+                sourceExists = true;
+        });
+
+    if (!sourceExists || source == file_system->get_root())
     {
-        FileNode *new_node =
-            file_system->copy_node(
-                clipboard_node,
-                file_system->get_current_directory()
-                );
+        QMessageBox::warning(
+            this, "粘贴失败",
+            "源文件或文件夹已失效。");
 
-        if (new_node == nullptr)
-        {
-            QMessageBox::warning(
-                this,
-                "粘贴失败",
-                "复制文件或文件夹失败！"
-                );
-            return;
-        }
-
-        // 记录复制操作，用于撤销
-        Operation op;
-        op.type = OperationType::COPY;
-        op.node = new_node; // 记录刚刚复制出来的新节点
-        undo_stack.push(op);
-        save_data(); // 立即持久化
-        // 入栈结束
-
-        refresh_tree();
-        refresh_file_list();
-
-        // 复制模式下，剪贴板继续保留
-        // 可以继续粘贴到其他目录
+        clipboard_node = nullptr;
+        clipboard_mode = ClipboardMode::None;
+        return;
     }
-    else if (clipboard_mode == ClipboardMode::Move)
+    // 2. 防止在同一目录中覆盖自己
+    if (source->get_parent() == target)
     {
-        // 移动前记录原父节点，供撤销时恢复
-        FileNode* old_parent = clipboard_node->get_parent();
+        QMessageBox::warning(
+            this, "粘贴失败",
+            "不能在同一目录中粘贴同名项目。");
+        return;
+    }
 
-        bool success =
-            file_system->move_node(
-                clipboard_node,
-                file_system->get_current_directory()
-                );
-
-        if (!success)
+    // 3. 防止将文件夹复制/移动到自身或子目录
+    for (FileNode* p = target;
+         p != nullptr;
+         p = p->get_parent())
+    {
+        if (p == source)
         {
             QMessageBox::warning(
-                this,
-                "粘贴失败",
-                "移动文件或文件夹失败！"
-                );
+                this, "粘贴失败",
+                "不能将文件夹粘贴到自身或其子目录。");
             return;
         }
-        // 记录移动操作，用于撤销
-        Operation op;
-        op.type = OperationType::MOVE;
-        op.node = clipboard_node;                  // 被移动的节点
-        op.old_parent = old_parent;                // 原父节点（刚才提前存好的）
-        op.new_parent = file_system->get_current_directory(); // 目标父节点
-        undo_stack.push(op);
-        save_data(); // 立即持久化
-        // 入栈结束
+    }
+
+    // -------------------------------------------------
+    // 第一阶段：预检查所有冲突
+    // 此阶段不对文件树做任何修改
+    // -------------------------------------------------
+    bool hasConflict = false;
+
+    std::function<bool(FileNode*, FileNode*)> checkConflicts;
+
+    checkConflicts = [&](FileNode* src,
+                         FileNode* destParent) -> bool
+    {
+        FileNode* existing = file_system->find_child(
+            destParent, src->get_name());
+
+        // 无冲突：整个子树都可以直接复制/移动
+        if (existing == nullptr)
+            return true;
+
+        hasConflict = true;
+
+        QString name = QString::fromStdString(
+            src->get_name());
+
+        QString path = QString::fromStdString(
+            file_system->get_path(existing));
+
+        // 同名但类型不同，直接拒绝
+        if (src->is_directory() !=
+            existing->is_directory())
+        {
+            QMessageBox::warning(
+                this, "类型冲突",
+                QString("目标位置已存在不同类型的同名项目：\n"
+                        "%1\n\n文件与文件夹不能互相替换。")
+                    .arg(path));
+            return false;
+        }
+
+        if (!src->is_directory())
+        {
+            // 文件冲突：询问替换
+            auto result = QMessageBox::question(
+                this,
+                "同名文件",
+                QString("目标位置已经存在文件：\n"
+                        "%1\n\n"
+                        "是否替换？\n"
+                        "选择“是”：旧文件移入回收站，"
+                        "新文件替换。\n"
+                        "选择“否”：取消本次粘贴。")
+                    .arg(path),
+                QMessageBox::Yes | QMessageBox::No,
+                QMessageBox::No);
+
+            return result == QMessageBox::Yes;
+        }
+
+        // 文件夹冲突：询问合并
+        auto result = QMessageBox::question(
+            this,
+            "同名文件夹",
+            QString("目标位置已经存在文件夹：\n"
+                    "%1\n\n"
+                    "是否合并两个文件夹？\n"
+                    "合并时会保留双方不重名的内容，"
+                    "重名文件将单独询问。\n\n"
+                    "选择“否”将取消本次粘贴。")
+                .arg(path),
+            QMessageBox::Yes | QMessageBox::No,
+            QMessageBox::No);
+
+        if (result != QMessageBox::Yes)
+            return false;
+
+        // 递归检查文件夹内部的冲突
+        for (FileNode* child = src->get_first_child();
+             child != nullptr;
+             child = child->get_next_sibling())
+        {
+            if (!checkConflicts(child, existing))
+                return false;
+        }
+
+        return true;
+    };
+
+    // 所有需要确认的冲突，必须先得到同意
+    if (!checkConflicts(source, target))
+    {
+        ui->statusbar->showMessage(
+            "用户取消粘贴，原有文件未改变。", 3000);
+        return;
+    }
+
+    // -------------------------------------------------
+    // 第二阶段：执行粘贴
+    // 用户已经确认全部冲突
+    // -------------------------------------------------
+    std::function<bool(FileNode*, FileNode*)> pasteRecursive;
+
+    pasteRecursive = [&](FileNode* src,
+                         FileNode* destParent) -> bool
+    {
+        FileNode* existing = file_system->find_child(
+            destParent, src->get_name());
+
+        // 情况 A：目标不存在同名项
+        if (existing == nullptr)
+        {
+            if (isCopy)
+                return file_system->copy_node(
+                           src, destParent) != nullptr;
+
+            return file_system->move_node(
+                src, destParent);
+        }
+
+        // 情况 B：同名文件，执行替换
+        if (!src->is_directory())
+        {
+            // 旧文件先移入回收站
+            if (!file_system->delete_node(existing))
+                return false;
+
+            // 将新文件复制/移动到目标目录
+            if (isCopy)
+                return file_system->copy_node(
+                           src, destParent) != nullptr;
+
+            return file_system->move_node(
+                src, destParent);
+        }
+
+        // 情况 C：同名文件夹，递归合并
+        // existing 保留为合并后的目标文件夹
+        FileNode* child = src->get_first_child();
+
+        while (child != nullptr)
+        {
+            // 移动节点前保存下一个兄弟节点
+            FileNode* next = child->get_next_sibling();
+
+            if (!pasteRecursive(child, existing))
+                return false;
+
+            child = next;
+        }
+
+        // 移动模式：所有内容已经进入目标文件夹
+        // 此时源文件夹为空，将其放入回收站
+        if (!isCopy)
+            return file_system->delete_node(src);
+
+        // 复制模式：源文件夹保持不变
+        return true;
+    };
+
+    // 记录普通粘贴所需的撤销信息
+    FileNode* oldParent = source->get_parent();
+
+    bool success = pasteRecursive(source, target);
+
+    if (!success)
+    {
+        // 理论上预检查通过后不应发生普通名称冲突
+        // 这里处理底层接口意外失败的情况
+        save_data();
         refresh_tree();
         refresh_file_list();
 
-        // 移动成功以后清空剪贴板
+        QMessageBox::critical(
+            this, "粘贴异常",
+            "执行粘贴时发生错误。\n"
+            "部分内容可能已经改变，请检查目标文件夹"
+            "和回收站。");
+        return;
+    }
+
+    // -------------------------------------------------
+    // 第三阶段：维护撤销栈、剪贴板和界面
+    // -------------------------------------------------
+
+    if (hasConflict)
+    {
+        // 当前撤销系统不能完整撤销递归合并与替换
+        // 清除旧历史，避免用户误认为可以撤销本次操作
+        while (!undo_stack.empty())
+            undo_stack.pop();
+    }
+    else
+    {
+        Operation op;
+
+        if (isCopy)
+        {
+            // 普通复制：寻找新创建的节点
+            FileNode* created = file_system->find_child(
+                target, source->get_name());
+
+            op.type = OperationType::COPY;
+            op.node = created;
+        }
+        else
+        {
+            op.type = OperationType::MOVE;
+            op.node = source;
+            op.old_parent = oldParent;
+            op.new_parent = target;
+        }
+
+        undo_stack.push(op);
+    }
+
+    // 移动完成后清空剪贴板
+    // 复制完成后保留，可以继续粘贴
+    if (!isCopy)
+    {
         clipboard_node = nullptr;
         clipboard_mode = ClipboardMode::None;
     }
+
+    save_data();
+    refresh_tree();
+    refresh_file_list();
+
+    ui->statusbar->showMessage(
+        hasConflict
+            ? "粘贴成功：同名内容已按确认结果处理。"
+            : "粘贴成功！",
+        3000);
 }
+
 
 
 void MainWindow::on_btn_back_clicked()
@@ -1092,9 +1768,9 @@ void MainWindow::navigate_to(
             file_system->get_current_directory();
 
         ui->lineEdit_path->setText(
-            QString::fromStdString(
-                file_system->get_path(current)
-                )
+            toDisplayPath(QString::fromStdString(
+                file_system->get_path(file_system->get_current_directory())
+                ))
             );
 
         ui->statusbar->showMessage(
@@ -1144,7 +1820,9 @@ void MainWindow::navigate_to(
         refresh_tree();
 
     ui->lineEdit_path->setText(
-        QString::fromStdString(currentPath)
+        toDisplayPath(QString::fromStdString(
+            file_system->get_path(file_system->get_current_directory())
+            ))
         );
 }
 
@@ -1152,6 +1830,10 @@ void MainWindow::navigate_to(
 void MainWindow::on_list_files_itemDoubleClicked(
     QListWidgetItem *item)
 {
+    // 双击进入文件夹优先于“再次单击重命名”。
+    rename_click_timer->stop();
+    last_clicked_item = nullptr;
+    last_click_time = 0;
     if (item == nullptr)
         return;
 
@@ -1238,7 +1920,7 @@ void MainWindow::on_tree_dir_itemClicked(
 
         // 隐藏普通文件操作
         ui->btn_new->hide();
-        ui->btn_move->hide();
+        ui->btn_cut->hide();
         ui->btn_copy->hide();
         ui->btn_paste->hide();
         ui->btn_rename->hide();
@@ -1260,7 +1942,7 @@ void MainWindow::on_tree_dir_itemClicked(
 
     // 恢复普通操作按钮
     ui->btn_new->show();
-    ui->btn_move->show();
+    ui->btn_cut->show();
     ui->btn_copy->show();
     ui->btn_paste->show();
     ui->btn_rename->show();
@@ -1292,9 +1974,9 @@ void MainWindow::on_tree_dir_itemClicked(
         refresh_file_list();
 
         ui->lineEdit_path->setText(
-            QString::fromStdString(
-                file_system->get_path(current)
-                )
+            toDisplayPath(QString::fromStdString(
+                file_system->get_path(file_system->get_current_directory())
+                ))
             );
 
         return;
@@ -1338,7 +2020,8 @@ void MainWindow::save_node_recursive(FileNode* node, std::ofstream& out) {
         << (node->is_pinned() ? "1" : "0") << "|"
         << node->get_pin_order() << "|"
         << node->get_size() << "|"
-        << (node->is_directory() ? "" : node->get_content()) << "\n"; // 文件夹内容为空
+        << (node->is_directory() ? "" : node->get_content()) << "|"
+        << (node->is_locked() ? "1" : "0") << "\n";
 
     // 递归遍历子节点
     FileNode* child = node->get_first_child();
@@ -1386,6 +2069,8 @@ void MainWindow::save_data()
                 << (node->is_directory()
                         ? ""
                         : node->get_content())
+                << "|"
+                << (node->is_locked() ? "1" : "0")
                 << "\n";
         }
         );
@@ -1500,6 +2185,7 @@ void MainWindow::load_data()
             std::string pin_order_str;
             std::string size_str;
             std::string content_str;
+            std::string locked_str;
 
             std::getline(ss, is_dir_str, '|');
             std::getline(ss, original_path, '|');
@@ -1510,6 +2196,7 @@ void MainWindow::load_data()
             std::getline(ss, pin_order_str, '|');
             std::getline(ss, size_str, '|');
             std::getline(ss, content_str, '|');
+            std::getline(ss, locked_str, '|');
 
             bool is_directory =
                 (is_dir_str == "D");
@@ -1524,6 +2211,11 @@ void MainWindow::load_data()
 
             if (recycledNode != nullptr)
             {
+                // 恢复上锁态
+                file_system->restore_recycle_lock_state(
+                    recycledNode, locked_str == "1"
+                    );
+
                 // 文件内容会同时影响 size 和修改时间，
                 // 因此先恢复内容，再恢复原始元数据。
                 if (!is_directory)
@@ -1592,6 +2284,7 @@ void MainWindow::load_data()
         std::string pin_order_str;
         std::string size_str;
         std::string content_str;
+        std::string locked_str;
 
         std::getline(ss, path, '|');
         std::getline(ss, c_time, '|');
@@ -1600,6 +2293,7 @@ void MainWindow::load_data()
         std::getline(ss, pin_order_str, '|');
         std::getline(ss, size_str, '|');
         std::getline(ss, content_str, '|');
+        std::getline(ss, locked_str, '|');
 
         if (path == "/" || path.empty())
             continue;
@@ -1649,6 +2343,10 @@ void MainWindow::load_data()
             // 未知记录类型直接忽略
             continue;
         }
+
+        file_system->restore_lock_state(
+            newNode, locked_str == "1"
+            );
 
         if (newNode != nullptr)
         {
@@ -2006,11 +2704,9 @@ void MainWindow::on_btn_undo_clicked()
         refresh_file_list();
 
         ui->lineEdit_path->setText(
-            QString::fromStdString(
-                file_system->get_path(
-                    file_system->get_current_directory()
-                    )
-                )
+            toDisplayPath(QString::fromStdString(
+                file_system->get_path(file_system->get_current_directory())
+                ))
             );
 
         save_data();
@@ -2096,7 +2792,7 @@ void MainWindow::on_btn_reset_clicked()
 
         // 恢复普通操作按钮
         ui->btn_new->show();
-        ui->btn_move->show();
+        ui->btn_cut->show();
         ui->btn_copy->show();
         ui->btn_paste->show();
         ui->btn_rename->show();

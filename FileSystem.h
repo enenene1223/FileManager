@@ -89,9 +89,25 @@ public:
                            bool pinned,
                            long long pin_order);
 
-
     // 递归深拷贝整个子树。
     FileNode *copy_node(FileNode *node, FileNode *target_parent);
+
+    // =========================
+    // 文件锁状态
+    // =========================
+
+    // 修改文件或文件夹的锁定状态
+    // 只允许操作活动文件树中的节点
+    bool set_locked(FileNode* node, bool locked);
+
+    // 查询节点自身是否上锁
+    bool is_locked(FileNode* node) const;
+
+    // 用于加载持久化数据时恢复锁定状态
+    bool restore_lock_state(FileNode* node, bool locked);
+
+    // 为加载回收站提供接口
+    bool restore_recycle_lock_state(FileNode* node, bool locked);
 
 
     // =========================

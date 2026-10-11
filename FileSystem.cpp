@@ -345,7 +345,11 @@ FileNode *FileSystem::find_by_path(const std::string &path) const
         return nullptr;
     }
 
-    if (path == "/" || path == ".") {
+    if (path == "/") {
+        return root_;
+    }
+
+    if (path == ".") {
         return current;
     }
 
@@ -722,6 +726,8 @@ FileNode *FileSystem::clone_subtree(FileNode *source, FileNode *new_parent)
     copy->modified_time_ = source->modified_time_;
     copy->size_ = source->size_;
     copy->content_ = source->content_;
+    // 保留节点自身的锁定状态
+    copy->is_locked_ = source->is_locked_;
 
     append_child(new_parent, copy);
 
@@ -1028,4 +1034,56 @@ FileNode* FileSystem::create_recycle_node_for_load(
     }
 
     return node;
+}
+
+
+bool FileSystem::restore_recycle_lock_state(
+    FileNode* node, bool locked)
+{
+    set_error(FileSystemError::NONE);
+
+    if (node == nullptr || !is_in_recycle_bin(node)) {
+        set_error(FileSystemError::NOT_IN_RECYCLE_BIN);
+        return false;
+    }
+
+    node->is_locked_ = locked;
+    return true;
+}
+
+
+// =========================
+// 文件锁状态管理
+// =========================
+bool FileSystem::set_locked(FileNode* node, bool locked)
+{
+    set_error(FileSystemError::NONE);
+
+    // 只能操作正常文件树中的有效节点
+    if (node == nullptr || !owns_active_node(node)) {
+        set_error(FileSystemError::INVALID_NODE);
+        return false;
+    }
+
+    // 根目录不允许上锁
+    if (node == root_) {
+        set_error(FileSystemError::ROOT_OPERATION);
+        return false;
+    }
+
+    node->is_locked_ = locked;
+    return true;
+}
+
+bool FileSystem::is_locked(FileNode* node) const
+{
+    if (node == nullptr || !owns_active_node(node))
+        return false;
+
+    return node->is_locked_;
+}
+
+bool FileSystem::restore_lock_state(FileNode* node, bool locked)
+{
+    return set_locked(node, locked);
 }

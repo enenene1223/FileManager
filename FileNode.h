@@ -24,6 +24,9 @@ public:
     bool is_pinned() const;
     void set_pinned(bool pinned);
 
+    // 文件锁：只提供读取接口
+    bool is_locked() const;
+
     long long get_size() const;
     long long get_pin_order() const;
 
@@ -41,6 +44,8 @@ private:
 
     bool is_directory_;
     bool pinned_;
+
+    bool is_locked_;
 
     long long size_;
     long long pin_order_;
