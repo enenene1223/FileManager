@@ -25,7 +25,7 @@ class MainWindow : public QMainWindow
     Q_OBJECT
 
 public:
-    explicit MainWindow(QWidget *parent = nullptr);
+    explicit  MainWindow(QString username, QWidget *parent = nullptr);
     ~MainWindow() override;
 
 protected:
@@ -80,6 +80,8 @@ private:
     std::stack<std::string> forward_stack;
 
     std::stack<Operation> undo_stack;
+
+    QString current_user;
 
     // 辅助函数
     void navigate_to(

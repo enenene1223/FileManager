@@ -29,9 +29,10 @@
 #include <utility>
 
 
-MainWindow::MainWindow(QWidget *parent)
+MainWindow::MainWindow(QString username,QWidget *parent)
     : QMainWindow(parent)
     , ui(new Ui::MainWindow)
+    ,current_user(username)
 {
     // 生成界面
     ui->setupUi(this);
@@ -1351,7 +1352,9 @@ void MainWindow::save_node_recursive(FileNode* node, std::ofstream& out) {
 
 void MainWindow::save_data()
 {
-    std::ofstream out("data.txt");
+   // std::ofstream out("data.txt");
+    QString filename = "data_" + current_user + ".txt";
+    std::ofstream out(filename.toStdString());
 
     if (!out.is_open())
     {
@@ -1414,8 +1417,9 @@ void MainWindow::save_data()
 
 void MainWindow::load_data()
 {
-    std::ifstream in("data.txt");
-
+    //std::ifstream in("data.txt");
+    QString filename = "data_" + current_user + ".txt";
+    std::ifstream in(filename.toStdString());
     // 第一次运行时没有 data.txt，直接返回
     if (!in.is_open())
         return;

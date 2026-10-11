@@ -20,6 +20,7 @@ qt_add_executable(FileManager
     Operation.cpp
 
     icons.qrc
+    logindialog.h logindialog.cpp logindialog.ui
 )
 
 target_compile_features(FileManager PRIVATE cxx_std_17)
