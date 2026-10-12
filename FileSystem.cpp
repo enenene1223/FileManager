@@ -6,6 +6,23 @@
 #include <sstream>
 #include <cctype>
 
+
+// 后缀验证辅助函数
+static bool is_valid_txt_filename(const std::string& name)
+{
+    const std::string suffix = ".txt";
+
+    if (name.size() <= suffix.size())
+        return false;
+
+    return name.compare(
+               name.size() - suffix.size(),
+               suffix.size(),
+               suffix
+               ) == 0;
+}
+
+
 namespace {
 bool contains_forbidden_name_character(const std::string &name)
 {
@@ -55,6 +72,12 @@ FileNode *FileSystem::create_file(FileNode *parent,
     }
 
     if (!is_valid_name(name)) {
+        set_error(FileSystemError::INVALID_NAME);
+        return nullptr;
+    }
+
+    // 只允许创建 .txt 文件
+    if (!is_valid_txt_filename(name)) {
         set_error(FileSystemError::INVALID_NAME);
         return nullptr;
     }
@@ -230,6 +253,14 @@ bool FileSystem::rename_node(FileNode *node, const std::string &new_name)
     }
 
     if (!is_valid_name(new_name)) {
+        set_error(FileSystemError::INVALID_NAME);
+        return false;
+    }
+
+    // 文件重命名必须保留 .txt 后缀
+    if (!node->is_directory_ &&
+        !is_valid_txt_filename(new_name))
+    {
         set_error(FileSystemError::INVALID_NAME);
         return false;
     }

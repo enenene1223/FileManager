@@ -1203,12 +1203,12 @@ void MainWindow::on_btn_rename_clicked()
 }
 
 
+
 void MainWindow::on_list_files_itemChanged(QListWidgetItem *item)
 {
-    if (item == nullptr)
+    if (item == nullptr || recycle_mode)
         return;
 
-    // 取出对应的 FileNode
     FileNode* node =
         item->data(Qt::UserRole).value<FileNode*>();
 
@@ -1216,72 +1216,83 @@ void MainWindow::on_list_files_itemChanged(QListWidgetItem *item)
         return;
 
     QString newName = item->text();
-
     QString oldName =
         QString::fromStdString(node->get_name());
 
-    // 名称没有改变，不需要处理
     if (newName == oldName)
         return;
 
-    // 不能为空
-    if (newName.trimmed().isEmpty()) {
+    // 重命名失败：恢复原名称并退出编辑
+    auto restoreName = [this, item, oldName](
+                           const QString& message)
+    {
         QSignalBlocker blocker(ui->list_files);
         item->setText(oldName);
 
         QMessageBox::warning(
-            this,
-            "重命名失败",
-            "文件名不能为空！"
-            );
+            this, "重命名失败", message);
+    };
 
+    // 1. 名称不能为空
+    if (newName.trimmed().isEmpty())
+    {
+        restoreName("文件名不能为空！");
         return;
     }
 
-    // 调用已有核心接口
+    // 2. 文件必须保留 .txt 后缀
+    if (!node->is_directory() &&
+        !newName.endsWith(".txt", Qt::CaseSensitive))
+    {
+        restoreName(
+            "文件必须保留 .txt 后缀，否则文件将无法正常使用。"
+            );
+        return;
+    }
+
+    // 3. 文件名不能只有后缀
+    if (!node->is_directory() && newName == ".txt")
+    {
+        restoreName("文件名不能只有 .txt 后缀！");
+        return;
+    }
+
+    // 4. 底层重命名
     bool success =
         file_system->rename_node(
-            node,
-            newName.toStdString()
-            );
+            node, newName.toStdString());
 
-    if (!success) {
-        // 核心拒绝重命名，例如：
-        // 同目录重名
-        // 非法字符
-        QSignalBlocker blocker(ui->list_files);
-
-        item->setText(oldName);
-
-        QMessageBox::warning(
-            this,
-            "重命名失败",
+    if (!success)
+    {
+        restoreName(
             "名称非法或当前目录已经存在同名文件/文件夹。"
             );
-
         return;
     }
 
+    // 5. 撤销记录
     Operation op;
     op.type = OperationType::RENAME;
     op.node = node;
-    op.old_name = oldName.toStdString(); // 旧名字
-    op.new_name = newName.toStdString(); // 新名字
+    op.old_name = oldName.toStdString();
+    op.new_name = newName.toStdString();
+
     undo_stack.push(op);
 
-    save_data(); // 立即保存，确保重启后撤销记录还在
-    // 重命名成功后刷新界面
+    // 6. 保存并刷新
+    save_data();
     refresh_file_list();
     refresh_tree();
 
-    // 如果改的是当前目录或者其他可能影响路径显示的节点，
-    // 同步刷新当前路径栏
     ui->lineEdit_path->setText(
         toDisplayPath(QString::fromStdString(
-            file_system->get_path(file_system->get_current_directory())
+            file_system->get_path(
+                file_system->get_current_directory()
+                )
             ))
         );
 }
+
 
 
 void MainWindow::on_list_files_itemPressed(QListWidgetItem *item)
@@ -1305,7 +1316,6 @@ void MainWindow::on_list_files_itemPressed(QListWidgetItem *item)
     last_clicked_item = item;
     last_click_time = now;
 }
-
 
 
 void MainWindow::on_btn_copy_clicked()
