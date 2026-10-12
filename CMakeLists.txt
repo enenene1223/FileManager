@@ -5,6 +5,9 @@ find_package(Qt6 6.5 REQUIRED COMPONENTS Core Widgets LinguistTools)
 
 qt_standard_project_setup()
 
+set(CMAKE_AUTORCC ON)
+
+
 qt_add_executable(FileManager
     WIN32 MACOSX_BUNDLE
     main.cpp
@@ -24,8 +27,6 @@ qt_add_executable(FileManager
 )
 
 target_compile_features(FileManager PRIVATE cxx_std_17)
-
-set(CMAKE_AUTORCC ON)
 
 qt_add_translations(
     TARGETS FileManager

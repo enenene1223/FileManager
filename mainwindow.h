@@ -60,8 +60,6 @@ private slots:
 
     void save_node_recursive(FileNode* node, std::ofstream& out); // 递归辅助函数
 
-    void on_btn_test_pin_clicked();//临时测试置顶功能
-
     // 回收站
     void on_btn_restore_clicked();
     void on_btn_permanent_delete_clicked();
@@ -93,8 +91,7 @@ private:
 
     QString current_user;
 
-    // 辅助函数
-    void navigate_to(
+    void navigate_to( // 导航
         const std::string& path,
         bool refreshTree = true,
         bool recordHistory = true
@@ -110,7 +107,10 @@ private:
 
     void addToListWidget(FileNode* node); // 声明这个新函数
 
-    void toggle_pin(FileNode* node);
+    void toggle_pin(FileNode* node);// 置顶
+
+    // 显示文件或文件夹的只读属性
+    void show_node_properties(FileNode* node);
 
     // 持久化
     void save_data();

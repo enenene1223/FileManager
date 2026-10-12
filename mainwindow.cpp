@@ -28,6 +28,7 @@
 
 #include <utility>
 #include <functional>
+#include <vector>
 
 #include <QShortcut> // 快捷键
 #include <QKeySequence>
@@ -43,6 +44,20 @@
 #include <QInputDialog>
 #include <QMessageBox>
 
+#include <QDialog> // 文件属性
+#include <QDialogButtonBox>
+#include <QFormLayout>
+#include <QLabel>
+#include <QVBoxLayout>
+
+#include <QPainter> // ui
+#include <QPixmap>
+#include <QSize>
+#include <QColor>
+
+#include <QDebug>// debug
+#include <QDir>
+
 // 路径显示
 static QString toDisplayPath(const QString& path)
 {
@@ -53,6 +68,57 @@ static QString toDisplayPath(const QString& path)
 }
 
 
+static QIcon makeFileNodeIcon(const FileNode* node)
+{
+    if (node == nullptr)
+        return QIcon();
+
+    // Qt 资源路径：qresource 前缀 /icons + 文件路径 icons/...
+    const QString basePath = node->is_directory()
+                                 ? ":/icons/icons/folder.svg"
+                                 : ":/icons/icons/file-text.svg";
+
+    const int iconSize = 32;
+
+    QPixmap canvas(iconSize, iconSize);
+    canvas.fill(Qt::transparent);
+
+    QPainter painter(&canvas);
+    painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+
+    QPixmap base = QIcon(basePath).pixmap(28, 28);
+    painter.drawPixmap(2, 2, base);
+
+    // 右下角叠加锁定状态
+    if (node->is_locked())
+    {
+        QPixmap lock =
+            QIcon(":/icons/icons/lock.svg").pixmap(13, 13);
+
+        painter.fillRect(
+            QRect(18, 18, 14, 14),
+            QColor(255, 255, 255, 230)
+            );
+
+        painter.drawPixmap(18, 18, lock);
+    }
+
+    // 左上角叠加置顶状态
+    if (node->is_pinned())
+    {
+        QPixmap pin =
+            QIcon(":/icons/icons/pin.svg").pixmap(12, 12);
+
+        painter.drawPixmap(0, 0, pin);
+    }
+
+    painter.end();
+
+    return QIcon(canvas);
+}
+
+
 MainWindow::MainWindow(QString username, QWidget *parent)
     : QMainWindow(parent)
     , ui(new Ui::MainWindow)
@@ -60,6 +126,12 @@ MainWindow::MainWindow(QString username, QWidget *parent)
 {
     // 生成界面
     ui->setupUi(this);
+
+    ui->list_files->setIconSize(QSize(24, 24));
+    ui->tree_dir->setIconSize(QSize(20, 20));
+
+    ui->list_files->setMouseTracking(true);
+
 
     // ===============================================
     // 目录区
@@ -441,6 +513,28 @@ MainWindow::MainWindow(QString username, QWidget *parent)
                 // ===========================================
                 if (!recycle_mode && item == nullptr)
                 {
+
+                    // 显示子菜单
+                    QMenu* displayMenu = menu.addMenu("显示");
+
+                    displayMenu->setIcon(
+                        QIcon(":/icons/icons/eye.svg")
+                        );
+
+                    // 隐私文件选项
+                    QAction* privacyAction =
+                        displayMenu->addAction("隐私文件");
+
+                    privacyAction->setCheckable(true);
+                    privacyAction->setChecked(show_privacy_mode);
+
+                    // 目前只预留菜单入口
+                    // 等队友完成密码验证和文件过滤后再启用
+                    privacyAction->setEnabled(false);
+
+                    menu.addSeparator();
+
+
                     QMenu* sortMenu = menu.addMenu("排序方式");
 
                     // 排序功能下一步接入
@@ -609,10 +703,28 @@ MainWindow::MainWindow(QString username, QWidget *parent)
 
                     menu.addSeparator();
 
-                    // 属性面板下一步接入
-                    QAction* propertyAction =
-                        menu.addAction("属性");
-                    propertyAction->setEnabled(false);
+                    // 上锁 / 解锁
+                    QAction* lockAction = menu.addAction(
+                        file_system->is_locked(node) ? "解锁" : "上锁"
+                        );
+                    lockAction->setEnabled(false);
+
+                    // 交给队友实现业务函数
+                   /* connect(lockAction, &QAction::triggered,
+                            this, [this, node]()
+                            {
+                                on_action_lock_clicked(node);
+                            });*/
+
+                    // 查看选中节点的属性
+                    QAction* propertyAction = menu.addAction("属性");
+
+                    connect(propertyAction, &QAction::triggered,
+                            this, [this, node]()
+                            {
+                                show_node_properties(node);
+                            });
+
                 }
 
                 // ===========================================
@@ -656,6 +768,198 @@ MainWindow::MainWindow(QString username, QWidget *parent)
 }
 
 
+
+void MainWindow::show_node_properties(FileNode* node)
+{
+    if (node == nullptr)
+        return;
+
+    const bool isDirectory = node->is_directory();
+
+    QString name =
+        QString::fromStdString(node->get_name());
+
+    // 计算文件或文件夹大小
+    long long totalBytes = 0;
+    int fileCount = 0;
+    int folderCount = 0;
+
+    if (isDirectory)
+    {
+        // 遍历整个子树，统计所有子文件和子文件夹
+        file_system->traverse(node, [&](FileNode* current)
+                              {
+                                  if (current == node)
+                                      return;
+
+                                  if (current->is_directory())
+                                  {
+                                      ++folderCount;
+                                  }
+                                  else
+                                  {
+                                      ++fileCount;
+
+                                      totalBytes +=
+                                          std::max(0LL, current->get_size());
+                                  }
+                              });
+    }
+    else
+    {
+        totalBytes = std::max(0LL, node->get_size());
+    }
+
+    // 格式化文件大小
+    QString sizeText =
+        QString("%1 字节").arg(totalBytes);
+
+    if (totalBytes >= 1024)
+    {
+        double value =
+            static_cast<double>(totalBytes) / 1024.0;
+
+        QString unit = "KiB";
+
+        if (value >= 1024.0)
+        {
+            value /= 1024.0;
+            unit = "MiB";
+        }
+
+        if (value >= 1024.0)
+        {
+            value /= 1024.0;
+            unit = "GiB";
+        }
+
+        sizeText += QString(" (%1 %2)")
+                        .arg(value, 0, 'f', 2)
+                        .arg(unit);
+    }
+
+    // 获取路径
+    QString fullPath = toDisplayPath(
+        QString::fromStdString(
+            file_system->get_path(node)
+            )
+        );
+
+    QString location = toDisplayPath(
+        QString::fromStdString(
+            file_system->get_path(node->get_parent())
+            )
+        );
+
+    // 创建属性对话框
+    QDialog dialog(this);
+
+    dialog.setWindowTitle(
+        QString(isDirectory
+                    ? "文件夹属性 - "
+                    : "文件属性 - ") + name
+        );
+
+    dialog.setMinimumWidth(460);
+
+    auto* mainLayout = new QVBoxLayout(&dialog);
+
+    auto* form = new QFormLayout();
+
+    form->setLabelAlignment(Qt::AlignRight);
+
+    form->setFieldGrowthPolicy(
+        QFormLayout::ExpandingFieldsGrow
+        );
+
+    mainLayout->addLayout(form);
+
+    // 添加一行只读属性
+    auto addRow = [&](const QString& title,
+                      const QString& value)
+    {
+        auto* label = new QLabel(value, &dialog);
+
+        label->setTextFormat(Qt::PlainText);
+        label->setWordWrap(true);
+
+        label->setTextInteractionFlags(
+            Qt::TextSelectableByMouse
+            );
+
+        form->addRow(title, label);
+    };
+
+    // 基本属性
+    addRow("名称：", name);
+
+    addRow("类型：",
+           isDirectory ? "文件夹" : "TXT 文本文件");
+
+    addRow("所在位置：", location);
+
+    addRow("完整路径：", fullPath);
+
+    addRow("大小：", sizeText);
+
+    // 文件夹特有属性
+    if (isDirectory)
+    {
+        addRow(
+            "包含：",
+            QString("%1 个文件，%2 个子文件夹")
+                .arg(fileCount)
+                .arg(folderCount)
+            );
+    }
+
+    // 时间
+    addRow(
+        "创建时间：",
+        QString::fromStdString(
+            node->get_created_time()
+            )
+        );
+
+    addRow(
+        "修改时间：",
+        QString::fromStdString(
+            node->get_modified_time()
+            )
+        );
+
+    // 状态
+    addRow(
+        "已置顶：",
+        node->is_pinned() ? "是" : "否"
+        );
+
+    addRow(
+        "已锁定：",
+        node->is_locked() ? "是" : "否"
+        );
+
+    // 确定按钮
+    auto* buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok,
+        &dialog
+        );
+
+    connect(
+        buttons,
+        &QDialogButtonBox::accepted,
+        &dialog,
+        &QDialog::accept
+        );
+
+    mainLayout->addWidget(buttons);
+
+    // 显示模态窗口
+    dialog.exec();
+}
+
+
+
 MainWindow::~MainWindow()
 {
     delete ui;
@@ -695,6 +999,8 @@ void MainWindow::refresh_file_list()
                     Qt::UserRole,
                     QVariant::fromValue(node)
                     );
+
+                item->setIcon(makeFileNodeIcon(node));
 
                 // 鼠标悬停时显示原来的完整路径
                 item->setToolTip(
@@ -750,12 +1056,13 @@ void MainWindow::build_tree_item(FileNode* node, QTreeWidgetItem* parentItem) {
 
     FileNode* child = node->get_first_child();
     while (child != nullptr) {
-        // 左侧树只显示文件夹（根据《开发须知》）
+        // 左侧树只显示文件夹
         if (child->is_directory()) {
             QTreeWidgetItem* item = new QTreeWidgetItem(parentItem);
             item->setText(0, QString::fromStdString(child->get_name()));
+            item->setIcon(0, makeFileNodeIcon(child));
 
-            // 把底层的 FileNode 指针存进 QTreeWidgetItem 的 UserRole 里！
+            // 把底层的 FileNode 指针存进 QTreeWidgetItem 的 UserRole 里
             item->setData(
                 0,
                 Qt::UserRole,
@@ -785,6 +1092,11 @@ void MainWindow::refresh_tree()
         new QTreeWidgetItem(ui->tree_dir);
 
     recycleItem->setText(0, "回收站");
+
+    recycleItem->setIcon(
+        0,
+        QIcon(":/icons/icons/recycle-bin.svg")
+        );
 
     recycleItem->setData(
         0,
@@ -836,6 +1148,8 @@ void MainWindow::refresh_tree()
                 node->get_name()
                 )
             );
+        // 文件或文件夹图标
+        item->setIcon(0, makeFileNodeIcon(node));
 
         // 第二列：置顶符号
         item->setText(1, "📌");
@@ -898,6 +1212,8 @@ void MainWindow::refresh_tree()
 
         item->setText(0, displayName);
 
+        item->setIcon(0, makeFileNodeIcon(node));
+
         item->setData(
             0,
             Qt::UserRole,
@@ -913,6 +1229,11 @@ void MainWindow::refresh_tree()
         new QTreeWidgetItem(ui->tree_dir);
 
     rootItem->setText(0, "此电脑");
+
+    rootItem->setIcon(
+        0,
+        QIcon(":/icons/icons/computer.svg")
+        );
 
     rootItem->setData(
         0,
@@ -1942,7 +2263,6 @@ void MainWindow::on_tree_dir_itemClicked(
         ui->btn_paste->hide();
         ui->btn_rename->hide();
         ui->btn_delete->hide();
-        ui->btn_test_pin->hide();
 
         refresh_file_list();
 
@@ -1964,7 +2284,6 @@ void MainWindow::on_tree_dir_itemClicked(
     ui->btn_paste->show();
     ui->btn_rename->show();
     ui->btn_delete->show();
-    ui->btn_test_pin->show();
 
     // 隐藏回收站操作
     ui->btn_restore->hide();
@@ -2070,28 +2389,36 @@ void MainWindow::save_data()
         out
         );
 
-    // 保存回收站
+    // 回收站顶层保持旧 R 格式；子节点新增 RC|深度|... 格式。
+    // 深度 1 代表顶层回收站文件夹的直接孩子。
     file_system->for_each_recycle_item(
-        [&](FileNode* node,
-            const std::string& original_path)
+        [&](FileNode* root, const std::string& original_path)
         {
-            out << "R|"
-                << (node->is_directory() ? "D" : "F") << "|"
-                << original_path << "|"
-                << node->get_name() << "|"
-                << node->get_created_time() << "|"
-                << node->get_modified_time() << "|"
-                << (node->is_pinned() ? "1" : "0") << "|"
-                << node->get_pin_order() << "|"
-                << node->get_size() << "|"
-                << (node->is_directory()
-                        ? ""
-                        : node->get_content())
-                << "|"
-                << (node->is_locked() ? "1" : "0")
-                << "\n";
-        }
-        );
+            std::function<void(FileNode*, int)> writeRecycle =
+                [&](FileNode* node, int depth)
+            {
+                if (depth == 0)
+                    out << "R|";
+                else
+                    out << "RC|" << depth << "|";
+
+                out << (node->is_directory() ? "D" : "F") << "|"
+                    << (depth == 0 ? original_path : "") << "|"
+                    << node->get_name() << "|"
+                    << node->get_created_time() << "|"
+                    << node->get_modified_time() << "|"
+                    << (node->is_pinned() ? "1" : "0") << "|"
+                    << node->get_pin_order() << "|"
+                    << node->get_size() << "|"
+                    << (node->is_directory() ? "" : node->get_content()) << "|"
+                    << (node->is_locked() ? "1" : "0") << "\n";
+
+                for (FileNode* child = node->get_first_child();
+                     child != nullptr; child = child->get_next_sibling())
+                    writeRecycle(child, depth + 1);
+            };
+            writeRecycle(root, 0);
+        });
 
     // 保存最近访问记录
     for (const QString& path : std::as_const(history_list))
@@ -2128,6 +2455,7 @@ void MainWindow::load_data()
     history_list.clear();
 
     std::string line;
+    std::vector<FileNode*> recycleParents; // 索引为 RC 的深度
 
     while (std::getline(in, line))
     {
@@ -2193,8 +2521,21 @@ void MainWindow::load_data()
         // R|D或F|原路径|名称|创建时间|修改时间
         //  |置顶|pin_order|大小|内容
         // =======================================================
-        if (type == "R")
+        if (type == "R" || type == "RC")
         {
+            int recycleDepth = 0;
+            if (type == "RC") {
+                std::string depthStr;
+                std::getline(ss, depthStr, '|');
+                try { recycleDepth = std::stoi(depthStr); }
+                catch (...) { continue; }
+                if (recycleDepth < 1 || recycleDepth > 1000 ||
+                    static_cast<size_t>(recycleDepth - 1) >= recycleParents.size() ||
+                    recycleParents[recycleDepth - 1] == nullptr)
+                    continue;
+            } else {
+                recycleParents.clear();
+            }
             std::string is_dir_str;
             std::string original_path;
             std::string name;
@@ -2222,7 +2563,7 @@ void MainWindow::load_data()
 
             FileNode* recycledNode =
                 file_system->create_recycle_node_for_load(
-                    nullptr,
+                    recycleDepth == 0 ? nullptr : recycleParents[recycleDepth - 1],
                     name,
                     is_directory,
                     original_path
@@ -2230,33 +2571,14 @@ void MainWindow::load_data()
 
             if (recycledNode != nullptr)
             {
-                // 文件内容会同时影响 size 和修改时间，
-                // 因此先恢复内容，再恢复原始元数据。
-                if (!is_directory)
-                {
-                    file_system->set_content(
-                        recycledNode,
-                        content_str
-                        );
-                }
-
                 long long size = 0;
+                try { size = std::stoll(size_str); }
+                catch (...) { size = 0; }
 
-                try
-                {
-                    size = std::stoll(size_str);
-                }
-                catch (...)
-                {
-                    size = 0;
-                }
-
-                file_system->set_metadata(
-                    recycledNode,
-                    size,
-                    c_time,
-                    m_time
-                    );
+                // 回收站节点不属于正常文件树，必须使用专用恢复接口。
+                file_system->restore_recycle_data(
+                    recycledNode, is_directory ? "" : content_str,
+                    size, c_time, m_time);
 
                 bool is_pinned =
                     (pinned_str == "1");
@@ -2283,6 +2605,11 @@ void MainWindow::load_data()
                 file_system->restore_recycle_lock_state(
                     recycledNode, locked_str == "1"
                     );
+
+                if (recycleParents.size() <= static_cast<size_t>(recycleDepth))
+                    recycleParents.resize(recycleDepth + 1, nullptr);
+                recycleParents[recycleDepth] = recycledNode;
+                recycleParents.resize(recycleDepth + 1);
             }
 
             // 回收站节点不能继续走普通文件树加载逻辑
@@ -2470,44 +2797,47 @@ void MainWindow::toggle_pin(FileNode* node)
 }
 
 
-//临时测试置顶功能
-void MainWindow::on_btn_test_pin_clicked()
+void MainWindow::addToListWidget(FileNode* node)
 {
-    QListWidgetItem* item = ui->list_files->currentItem();
-
-    if (item == nullptr)
-    {
-        QMessageBox::information(this, "提示", "请先选择一个文件或文件夹！");
-        return;
-    }
-
-    FileNode* node =
-        item->data(Qt::UserRole).value<FileNode*>();
-
     if (node == nullptr)
         return;
 
-    toggle_pin(node);
-}
+    QString name =
+        QString::fromStdString(node->get_name());
 
+    QListWidgetItem* item = new QListWidgetItem(name);
 
-void MainWindow::addToListWidget(FileNode* node) {
-    if (node == nullptr) return;
+    // 保留原有的底层节点指针
+    item->setData(
+        Qt::UserRole,
+        QVariant::fromValue(node)
+        );
 
-    QListWidgetItem *item = new QListWidgetItem(QString::fromStdString(node->get_name()));
-    item->setData(Qt::UserRole, QVariant::fromValue(node));
-    item->setFlags(item->flags() | Qt::ItemIsEditable);
+    // 保留行内重命名
+    item->setFlags(
+        item->flags() | Qt::ItemIsEditable
+        );
 
-    // 方案B的核心：如果置顶，就加粗字体
-   // if (node->is_pinned()) {
-     //   QFont font = item->font();
-       // font.setBold(true);
-        //item->setFont(font);
-        // 也可以加个图钉图标：item->setText("📌 " + item->text());
-    //}
+    // SVG 图标与状态
+    item->setIcon(makeFileNodeIcon(node));
+
+    // 悬停提示
+    QString tooltip =
+        node->is_directory() ? "类型：文件夹" : "类型：TXT 文本文件";
+
+    tooltip += "\n名称：" + name;
+
+    if (node->is_pinned())
+        tooltip += "\n状态：已置顶";
+
+    if (node->is_locked())
+        tooltip += "\n状态：已锁定";
+
+    item->setToolTip(tooltip);
 
     ui->list_files->addItem(item);
 }
+
 
 
 void MainWindow::on_btn_restore_clicked()
@@ -2838,7 +3168,6 @@ void MainWindow::on_btn_reset_clicked()
         ui->btn_paste->show();
         ui->btn_rename->show();
         ui->btn_delete->show();
-        ui->btn_test_pin->show();
 
         // 隐藏回收站操作
         ui->btn_restore->hide();
@@ -2888,7 +3217,7 @@ void MainWindow::on_btn_exit_clicked()
 
 }
 
-// 哈希函数（必须和 LoginDialog 里的完全一致！）
+// 哈希函数（与 LoginDialog 内完全一致）
 QString MainWindow::hashPassword(const QString& password) {
     QString salt = "FileManager_Salt_2024";
     return QString(QCryptographicHash::hash((password + salt).toUtf8(), QCryptographicHash::Sha256).toHex());
