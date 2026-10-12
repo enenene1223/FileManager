@@ -23,6 +23,7 @@ private:
 private slots:
     void on_btn_register_clicked(); // 👈 注册按钮的槽函数声明
     void on_btn_login_clicked();    // 👈 登录按钮的槽函数声明
+    void on_btn_modify_privacy_clicked();
 };
 
 #endif // LOGINDIALOG_H
