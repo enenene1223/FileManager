@@ -994,7 +994,8 @@ bool FileSystem::restore_pin_state(FileNode* node,bool pinned,long long pin_orde
     set_error(FileSystemError::NONE);
 
     // 允许活动树节点，也允许回收站里的节点
-    if (node == nullptr || (!owns_active_node(node) && !is_in_recycle_bin(node))) {
+    if (node == nullptr || (!owns_active_node(node) && !is_in_recycle_bin(node) &&
+        !([&]() { FileNode* p = node; while (p->parent_ != nullptr) p = p->parent_; return is_in_recycle_bin(p); })())) {
         set_error(FileSystemError::INVALID_NODE);
         return false;
     }
@@ -1068,12 +1069,43 @@ FileNode* FileSystem::create_recycle_node_for_load(
 }
 
 
+bool FileSystem::restore_recycle_data(FileNode* node, const std::string& content,
+                                      long long size, const std::string& created_time,
+                                      const std::string& modified_time)
+{
+    set_error(FileSystemError::NONE);
+    if (node == nullptr || size < 0) {
+        set_error(FileSystemError::INVALID_METADATA);
+        return false;
+    }
+    // 子节点不是 RecycleEntry 的顶层项：沿父节点向上查找回收站根。
+    FileNode* root = node;
+    while (root->parent_ != nullptr)
+        root = root->parent_;
+    if (!is_in_recycle_bin(root)) {
+        set_error(FileSystemError::NOT_IN_RECYCLE_BIN);
+        return false;
+    }
+    if (!node->is_directory_)
+        node->content_ = content;
+    node->size_ = size;
+    node->created_time_ = created_time.empty() ? now_string() : created_time;
+    node->modified_time_ = modified_time.empty() ? now_string() : modified_time;
+    return true;
+}
+
 bool FileSystem::restore_recycle_lock_state(
     FileNode* node, bool locked)
 {
     set_error(FileSystemError::NONE);
 
-    if (node == nullptr || !is_in_recycle_bin(node)) {
+    if (node == nullptr) {
+        set_error(FileSystemError::NOT_IN_RECYCLE_BIN);
+        return false;
+    }
+    FileNode* root = node;
+    while (root->parent_ != nullptr) root = root->parent_;
+    if (!is_in_recycle_bin(root)) {
         set_error(FileSystemError::NOT_IN_RECYCLE_BIN);
         return false;
     }

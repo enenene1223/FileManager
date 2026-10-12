@@ -108,6 +108,10 @@ public:
 
     // 为加载回收站提供接口
     bool restore_recycle_lock_state(FileNode* node, bool locked);
+    // 仅供存档恢复：恢复回收站节点（包含子节点）的内容与元数据。
+    bool restore_recycle_data(FileNode* node, const std::string& content,
+                              long long size, const std::string& created_time,
+                              const std::string& modified_time);
 
 
     // =========================
