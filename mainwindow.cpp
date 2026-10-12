@@ -37,6 +37,12 @@
 #include <QCursor>
 #include <QStyle>
 
+#include <QCryptographicHash>
+#include <QFile>
+#include <QTextStream>
+#include <QInputDialog>
+#include <QMessageBox>
+
 // 路径显示
 static QString toDisplayPath(const QString& path)
 {
@@ -2422,11 +2428,32 @@ void MainWindow::load_data()
 }
 
 
-void MainWindow::closeEvent(QCloseEvent *event) {
-    save_data(); // 窗口关闭时，偷偷执行一次保存
+// 重写 closeEvent（极其核心的防崩溃逻辑！）
+void MainWindow::closeEvent(QCloseEvent *event)
+{
+    save_data(); // 1. 无论怎么关，先保存当前用户的数据！
+
+    if (is_logout_action) {
+        // === 2. 如果是注销，必须彻底清理所有旧内存，防止新用户登录后指针悬空崩溃 ===
+        delete file_system; // 释放底层文件系统
+        file_system = nullptr;
+
+        // 清空所有栈和历史记录
+        while (!undo_stack.empty()) undo_stack.pop();
+        while (!back_stack.empty()) back_stack.pop();
+        while (!forward_stack.empty()) forward_stack.pop();
+        history_list.clear();
+
+        // 清空剪贴板
+        clipboard_node = nullptr;
+        clipboard_mode = ClipboardMode::None;
+        recycle_mode = false;
+
+        is_logout_action = false; // 恢复标记，为下一次登录做准备
+    }
+
     event->accept(); // 接受关闭事件
 }
-
 
 void MainWindow::toggle_pin(FileNode* node)
 {
@@ -2833,3 +2860,54 @@ void MainWindow::on_btn_reset_clicked()
         QMessageBox::information(this, "重置成功", "系统已成功重置！");
 
 }
+
+void MainWindow::on_btn_logout_clicked()
+{
+    // 注销按钮：清理环境，回到登录界面
+
+        if (QMessageBox::question(this, "注销", "确定要切换账号吗？") != QMessageBox::Yes) return;
+
+        is_logout_action = true; // 标记为注销
+        qApp->setProperty("is_logout_requested", true); // 通知 main.cpp 继续循环
+
+        this->close(); // 触发 closeEvent
+
+}
+
+
+void MainWindow::on_btn_exit_clicked()
+{
+    // 退出按钮：彻底结束程序
+
+        if (QMessageBox::question(this, "退出", "确定要彻底退出程序吗？") != QMessageBox::Yes) return;
+
+        is_logout_action = false; // 标记为退出
+        qApp->setProperty("is_logout_requested", false);
+
+        this->close();
+
+}
+
+// 哈希函数（必须和 LoginDialog 里的完全一致！）
+QString MainWindow::hashPassword(const QString& password) {
+    QString salt = "FileManager_Salt_2024";
+    return QString(QCryptographicHash::hash((password + salt).toUtf8(), QCryptographicHash::Sha256).toHex());
+}
+
+// 验证隐私密码（从 users.txt 读取当前用户的隐私密码哈希比对）
+bool MainWindow::verify_privacy_password(const QString& password) {
+    QFile file("users.txt");
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) return false;
+    QTextStream in(&file);
+    while (!in.atEnd()) {
+        QStringList parts = in.readLine().split("|");
+        if (parts.size() >= 3 && parts[0] == current_user) {
+            file.close();
+            return parts[2] == hashPassword(password);
+        }
+    }
+    file.close();
+    return false;
+}
+
+

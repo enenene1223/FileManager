@@ -28,9 +28,11 @@ class MainWindow : public QMainWindow
 public:
     explicit  MainWindow(QString username, QWidget *parent = nullptr);
     ~MainWindow() override;
+    bool is_logout_action = false; // 区分是否是注销
 
 protected:
     void closeEvent(QCloseEvent *event) override;
+
 
 private slots:
     void on_btn_delete_clicked();
@@ -68,12 +70,20 @@ private slots:
     void on_btn_undo_clicked();
 
     void on_btn_reset_clicked();
+    void on_btn_logout_clicked(); // 注销按钮
+    void on_btn_exit_clicked();   // 退出按钮
 
 private:
 
     Ui::MainWindow *ui;
 
     FileSystem *file_system;    // 底层文件系统核心
+
+    bool has_privacy_access = false; // 当前会话是否已通过隐私密码验证
+    bool show_privacy_mode = false;  // 是否处于“显示隐私文件”模式
+
+    bool verify_privacy_password(const QString& password); // 校验隐私密码
+    QString hashPassword(const QString& password);         // 哈希工具（复用登录界面的逻辑）
 
     // 导航用的两个栈
     std::stack<std::string> back_stack;
