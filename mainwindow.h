@@ -35,6 +35,8 @@ protected:
 
 
 private slots:
+    void on_action_lock_clicked();
+    void on_action_show_privacy_triggered();
     void on_btn_delete_clicked();
 
     void on_btn_rename_clicked();
@@ -79,6 +81,8 @@ private:
 
     bool has_privacy_access = false; // 当前会话是否已通过隐私密码验证
     bool show_privacy_mode = false;  // 是否处于“显示隐私文件”模式
+    std::string encryptContent(const std::string& content);
+    std::string decryptContent(const std::string& encryptedContent);
 
     bool verify_privacy_password(const QString& password); // 校验隐私密码
     QString hashPassword(const QString& password);         // 哈希工具（复用登录界面的逻辑）

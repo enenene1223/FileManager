@@ -6,6 +6,10 @@
 #include <QMessageBox>
 #include <QInputDialog>
 #include <QLineEdit>
+#include <QDialog>
+#include <QFormLayout>
+#include <QDialogButtonBox>
+
 
 LoginDialog::LoginDialog(QWidget *parent)
     : QDialog(parent)
@@ -29,47 +33,73 @@ QString hashPassword(const QString& password) {
 //注册
 void LoginDialog::on_btn_register_clicked()
 {
-    // 1. 获取三个输入框的内容
-    QString user = ui->lineEdit_user->text().trimmed();
-    QString pass = ui->lineEdit_pass->text().trimmed();
-    QString privacyPass = ui->lineEdit_privacy_pass->text().trimmed(); // 👈 新增隐私密码
 
-    if (user.isEmpty() || pass.isEmpty()) {
-        QMessageBox::warning(this, "提示", "账号和密码不能为空！");
-        return;
-    }
+        // ================= 弹出一个自定义的注册对话框 =================
+        QDialog registerDialog(this);
+        registerDialog.setWindowTitle("注册新用户");
 
-    // 如果用户没填隐私密码，默认设为和登录密码相同
-    if (privacyPass.isEmpty()) {
-        privacyPass = pass;
-    }
+        // 创建布局
+        QFormLayout* layout = new QFormLayout(&registerDialog);
 
-    // 2. 检查用户名是否重复
-    QFile file("users.txt");
-    if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        QTextStream in(&file);
-        while (!in.atEnd()) {
-            QString line = in.readLine();
-            QStringList parts = line.split("|");
-            if (parts.size() >= 1 && parts[0] == user) {
-                QMessageBox::warning(this, "注册失败", "用户名已存在！");
-                file.close();
-                return;
-            }
+        // 创建三个输入框
+        QLineEdit* editUser = new QLineEdit(&registerDialog);
+        QLineEdit* editPass = new QLineEdit(&registerDialog);
+        QLineEdit* editPrivacy = new QLineEdit(&registerDialog);
+        editPass->setEchoMode(QLineEdit::Password);
+        editPrivacy->setEchoMode(QLineEdit::Password);
+
+        // 加入布局
+        layout->addRow("账号：", editUser);
+        layout->addRow("密码：", editPass);
+        layout->addRow("隐私密码：", editPrivacy);
+
+        // 添加确认和取消按钮
+        QDialogButtonBox* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &registerDialog);
+        layout->addWidget(buttons);
+
+        // 绑定按钮事件
+        connect(buttons, &QDialogButtonBox::accepted, &registerDialog, &QDialog::accept);
+        connect(buttons, &QDialogButtonBox::rejected, &registerDialog, &QDialog::reject);
+
+        // 显示注册弹窗
+        if (registerDialog.exec() != QDialog::Accepted) return; // 用户取消，直接返回
+
+        // ================= 用户点击了“确定”，开始真正的注册逻辑 =================
+        QString user = editUser->text().trimmed();
+        QString pass = editPass->text().trimmed();
+        QString privacyPass = editPrivacy->text().trimmed();
+
+        if (user.isEmpty() || pass.isEmpty()) {
+            QMessageBox::warning(this, "提示", "账号和密码不能为空！");
+            return;
         }
-        file.close();
-    }
+        if (privacyPass.isEmpty()) privacyPass = pass; // 没填默认与登录密码相同
 
-    // 3. 写入新用户（关键：改成三列格式！）
-    if (file.open(QIODevice::Append | QIODevice::Text)) {
-        QTextStream out(&file);
-        // 格式：账号 | 登录密码哈希 | 隐私密码哈希
-        out << user << "|"
-            << hashPassword(pass) << "|"
-            << hashPassword(privacyPass) << "\n";
-        file.close();
-        QMessageBox::information(this, "注册成功", "账号已注册，请登录！");
-    }
+        // 检查重复（保留你原有的逻辑）
+        QFile file("users.txt");
+        if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            QTextStream in(&file);
+            while (!in.atEnd()) {
+                QStringList parts = in.readLine().split("|");
+                if (parts.size() >= 1 && parts[0] == user) {
+                    QMessageBox::warning(this, "注册失败", "用户名已存在！");
+                    file.close();
+                    return;
+                }
+            }
+            file.close();
+        }
+
+        // 写入三列（账号|登录密码哈希|隐私密码哈希）
+        if (file.open(QIODevice::Append | QIODevice::Text)) {
+            QTextStream out(&file);
+            out << user << "|"
+                << hashPassword(pass) << "|"
+                << hashPassword(privacyPass) << "\n";
+            file.close();
+            QMessageBox::information(this, "注册成功", "账号已注册，请直接登录！");
+        }
+
 }
 
 // 登录按钮
