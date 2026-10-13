@@ -57,6 +57,7 @@
 
 #include <QDebug>// debug
 #include <QDir>
+#include <QByteArray>
 
 // 路径显示
 static QString toDisplayPath(const QString& path)
@@ -523,15 +524,14 @@ MainWindow::MainWindow(QString username, QWidget *parent)
 
                     // 隐私文件选项
                     QAction* privacyAction =
-                        displayMenu->addAction("隐私文件");
+                        displayMenu->addAction(show_privacy_mode ? "隐藏隐私文件" : "显示隐私文件");
 
                     privacyAction->setCheckable(true);
                     privacyAction->setChecked(show_privacy_mode);
+                    privacyAction->setEnabled(true); // 👈 解除封印
 
-                    // 目前只预留菜单入口
-                    // 等队友完成密码验证和文件过滤后再启用
-                    privacyAction->setEnabled(false);
-
+                    // 👈 绑定槽函数
+                    connect(privacyAction, &QAction::triggered, this, &MainWindow::on_action_show_privacy_triggered);
                     menu.addSeparator();
 
 
@@ -667,6 +667,19 @@ MainWindow::MainWindow(QString username, QWidget *parent)
                                     return;
                                 }
 
+                                if (file_system->is_locked(node)) {
+                                    bool ok;
+                                    QString pass = QInputDialog::getText(this, "文件已锁定", "该文件夹已锁定，请输入隐私密码：", QLineEdit::Password, "", &ok);
+                                    if (!ok) return;
+
+                                    if (verify_privacy_password(pass)) {
+                                        has_privacy_access = true; // 密码正确，授予权限
+                                        refresh_file_list(); // 刷新一下让界面显示该文件
+                                    } else {
+                                        QMessageBox::warning(this, "错误", "隐私密码错误！");
+                                        return; // 密码错误，不执行打开操作
+                                    }
+                                }
                                 std::string currentPath =
                                     file_system->get_path(
                                         file_system->get_current_directory());
@@ -707,7 +720,10 @@ MainWindow::MainWindow(QString username, QWidget *parent)
                     QAction* lockAction = menu.addAction(
                         file_system->is_locked(node) ? "解锁" : "上锁"
                         );
-                    lockAction->setEnabled(false);
+                    lockAction->setEnabled(true);
+
+                    // 👈 绑定你自己的槽函数
+                    connect(lockAction, &QAction::triggered, this, &MainWindow::on_action_lock_clicked);
 
                     // 交给队友实现业务函数
                    /* connect(lockAction, &QAction::triggered,
@@ -1030,6 +1046,11 @@ void MainWindow::refresh_file_list()
 
     while (child != nullptr)
     {
+        // 👈 【加这里】
+        if (file_system->is_locked(child) && !has_privacy_access) {
+            child = child->get_next_sibling();
+            continue;
+        }
         if (child->is_pinned())
             addToListWidget(child);
 
@@ -1042,6 +1063,12 @@ void MainWindow::refresh_file_list()
 
     while (child != nullptr)
     {
+        // 👈 【加这里】
+        if (file_system->is_locked(child) && !has_privacy_access) {
+            child = child->get_next_sibling();
+            continue;
+        }
+
         if (!child->is_pinned())
             addToListWidget(child);
 
@@ -1058,6 +1085,11 @@ void MainWindow::build_tree_item(FileNode* node, QTreeWidgetItem* parentItem) {
     while (child != nullptr) {
         // 左侧树只显示文件夹
         if (child->is_directory()) {
+            if (file_system->is_locked(child) && !has_privacy_access) {
+                child = child->get_next_sibling();
+                continue;
+            }
+
             QTreeWidgetItem* item = new QTreeWidgetItem(parentItem);
             item->setText(0, QString::fromStdString(child->get_name()));
             item->setIcon(0, makeFileNodeIcon(child));
@@ -1121,6 +1153,9 @@ void MainWindow::refresh_tree()
 
             if (file_system->is_pinned(node))
             {
+                if (file_system->is_locked(node) && !has_privacy_access) {
+                    return;
+                }
                 pinnedNodes.append(node);
             }
         }
@@ -1188,6 +1223,8 @@ void MainWindow::refresh_tree()
 
         // 已经置顶的项目不在最近访问中重复显示
         if (file_system->is_pinned(node))
+            continue;
+        if (file_system->is_locked(node) && !has_privacy_access)
             continue;
 
         QTreeWidgetItem* item =
@@ -1505,6 +1542,7 @@ void MainWindow::on_btn_delete_clicked()
 
 void MainWindow::on_btn_rename_clicked()
 {
+
     if (recycle_mode)
         return;
 
@@ -1657,7 +1695,18 @@ void MainWindow::on_btn_copy_clicked()
 
     if (node == nullptr)
         return;
-
+    if (file_system->is_locked(node) ) {
+        bool ok;
+        QString pass = QInputDialog::getText(this, "文件已锁定", "该文件已锁定，请输入隐私密码解锁：", QLineEdit::Password, "", &ok);
+        if (!ok) return;
+        if (verify_privacy_password(pass)) {
+            has_privacy_access = true; // 通过验证，临时授权
+            refresh_file_list();
+        } else {
+            QMessageBox::warning(this, "错误", "隐私密码错误！");
+            return;
+        }
+    }
     clipboard_node = node;
     clipboard_mode = ClipboardMode::Copy;
 }
@@ -1675,7 +1724,18 @@ void MainWindow::on_btn_cut_clicked()
 
     if (node == nullptr)
         return;
-
+    if (file_system->is_locked(node) ) {
+        bool ok;
+        QString pass = QInputDialog::getText(this, "文件已锁定", "该文件已锁定，请输入隐私密码解锁：", QLineEdit::Password, "", &ok);
+        if (!ok) return;
+        if (verify_privacy_password(pass)) {
+            has_privacy_access = true; // 通过验证，临时授权
+            refresh_file_list();
+        } else {
+            QMessageBox::warning(this, "错误", "隐私密码错误！");
+            return;
+        }
+    }
     clipboard_node = node;
     clipboard_mode = ClipboardMode::Cut;
 }
@@ -2056,8 +2116,10 @@ void MainWindow::on_btn_search_clicked()
 
     file_system->traverse(
         file_system->get_current_directory(),
-        [&results, &keyword](FileNode* node)
+        [&results, &keyword,this](FileNode* node)
         {
+            // 👈 加这里：锁定且无权限，跳过不搜索
+            if (file_system->is_locked(node) && !has_privacy_access) return;
             QString name =
                 QString::fromStdString(
                     node->get_name()
@@ -2182,6 +2244,18 @@ void MainWindow::on_list_files_itemDoubleClicked(
     if (targetNode == nullptr)
         return;
 
+    if (file_system->is_locked(targetNode) ) {
+        bool ok;
+        QString pass = QInputDialog::getText(this, "文件已锁定", "请输入隐私密码：", QLineEdit::Password, "", &ok);
+        if (!ok) return;
+        if (verify_privacy_password(pass)) {
+            has_privacy_access = true; // 通过验证
+            refresh_file_list();
+        } else {
+            QMessageBox::warning(this, "错误", "密码错误！");
+            return;
+        }
+    }
     if (!targetNode->is_directory())
     {
         QMessageBox::information(
@@ -2348,6 +2422,17 @@ void MainWindow::save_node_recursive(FileNode* node, std::ofstream& out) {
 
     std::string path = file_system->get_path(node);
 
+    // 👇 【新增：判断是否需要加密内容】
+    std::string contentToSave = "";
+    if (!node->is_directory()) {
+        if (node->is_locked()) {
+            // 如果文件被锁定，保存加密后的内容
+            contentToSave = encryptContent(node->get_content());
+        } else {
+            // 没锁，按原样保存
+            contentToSave = node->get_content();
+        }
+    }
     // 写入 8 个字段
     out << (node->is_directory() ? "D" : "F") << "|"
         << path << "|"
@@ -2356,7 +2441,8 @@ void MainWindow::save_node_recursive(FileNode* node, std::ofstream& out) {
         << (node->is_pinned() ? "1" : "0") << "|"
         << node->get_pin_order() << "|"
         << node->get_size() << "|"
-        << (node->is_directory() ? "" : node->get_content()) << "|"
+       //<< (node->is_directory() ? "" : node->get_content()) << "|"
+         << contentToSave << "|"  // 👈 替换原来的 content
         << (node->is_locked() ? "1" : "0") << "\n";
 
     // 递归遍历子节点
@@ -2677,12 +2763,19 @@ void MainWindow::load_data()
         }
         else if (type == "F")
         {
-            newNode =
-                file_system->create_file(
-                    parentNode,
-                    name,
-                    ""
-                    );
+            std::string finalContent = "";
+
+            // 👇 【新增：判断是否需要解密】
+            if (locked_str == "1") {
+                // 如果是锁定文件，说明文件里存的是加密后的 Base64 字符串，需要先解密
+                finalContent = decryptContent(content_str);
+            } else {
+                // 普通文件，直接使用明文
+                finalContent = content_str;
+            }
+
+            // 把最终内容设置进节点
+            file_system->set_content(newNode, finalContent);
         }
         else
         {
@@ -3239,4 +3332,90 @@ bool MainWindow::verify_privacy_password(const QString& password) {
     return false;
 }
 
+void MainWindow::on_action_lock_clicked()
+{
+    QListWidgetItem* item = ui->list_files->currentItem();
+    if (!item) return;
+    FileNode* node = item->data(Qt::UserRole).value<FileNode*>();
+    if (!node) return;
 
+    // 如果是锁定状态，要解锁（需要隐私密码）
+    if (file_system->is_locked(node)) {
+        bool ok;
+        QString pass = QInputDialog::getText(this, "解锁", "请输入隐私密码：", QLineEdit::Password, "", &ok);
+        if (ok && verify_privacy_password(pass)) {
+            file_system->set_locked(node, false); // 解锁
+            refresh_file_list();
+            save_data(); // 触发持久化
+            ui->statusbar->showMessage("已解锁！", 2000);
+        } else if (ok) {
+            QMessageBox::warning(this, "错误", "隐私密码错误！");
+        }
+    }
+    // 如果不是锁定状态，直接上锁
+    else {
+        file_system->set_locked(node, true); // 上锁
+        refresh_file_list();
+        save_data(); // 触发持久化
+        ui->statusbar->showMessage("已上锁！", 2000);
+    }
+}
+void MainWindow::on_action_show_privacy_triggered()
+{
+    // 如果当前是“显示”状态，点击后变成“隐藏”
+    if (show_privacy_mode) {
+        show_privacy_mode = false;
+        has_privacy_access = false; // 收回权限
+        refresh_file_list();
+        ui->statusbar->showMessage("已隐藏隐私文件", 2000);
+        return;
+    }
+
+    // 如果当前是“隐藏”状态，必须验证密码才能显示
+    bool ok;
+    QString pass = QInputDialog::getText(this, "显示隐私文件", "请输入隐私密码查看隐私文件：", QLineEdit::Password, "", &ok);
+    if (ok && verify_privacy_password(pass)) {
+        show_privacy_mode = true;
+        has_privacy_access = true; // 授予当前会话权限
+        refresh_file_list();
+        ui->statusbar->showMessage("隐私文件已显示", 3000);
+    } else if (ok) {
+        QMessageBox::warning(this, "错误", "隐私密码错误！");
+    }
+}
+
+// 简单的异或加密 + Base64编码
+std::string MainWindow::encryptContent(const std::string& content)
+{
+    if (content.empty()) return content;
+
+    std::string encrypted = content;
+    const char key = 0x5A; // 加密密钥
+
+    for (char& c : encrypted) {
+        c ^= key;
+    }
+
+    // 使用 Qt 的 Base64 编码，防止出现 '|' 破坏文件格式
+    QByteArray data(encrypted.c_str(), static_cast<int>(encrypted.size()));
+    return data.toBase64().toStdString();
+}
+
+// 先 Base64 解码，再进行异或解密
+std::string MainWindow::decryptContent(const std::string& encryptedContent)
+{
+    if (encryptedContent.empty()) return encryptedContent;
+
+    // Base64 解码
+    QByteArray data = QByteArray::fromBase64(
+        QByteArray::fromStdString(encryptedContent));
+
+    std::string decrypted(data.constData(), data.size());
+    const char key = 0x5A;
+
+    for (char& c : decrypted) {
+        c ^= key;
+    }
+
+    return decrypted;
+}
