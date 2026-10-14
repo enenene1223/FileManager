@@ -111,7 +111,8 @@ void MainWindow::setup_integrated_tools()
     path_stack_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred); path_stack_->setFixedHeight(30);
     auto previousPathItem = ui->horizontalLayout->replaceWidget(ui->lineEdit_path, path_stack_); delete previousPathItem;
     breadcrumb_bar_ = new QWidget(path_stack_); breadcrumb_bar_->setObjectName("breadcrumb_bar");
-    auto crumbs = new QHBoxLayout(breadcrumb_bar_); crumbs->setContentsMargins(4, 0, 4, 0); crumbs->setSpacing(0);
+    breadcrumb_bar_->setAttribute(Qt::WA_StyledBackground, true);
+    auto crumbs = new QHBoxLayout(breadcrumb_bar_); crumbs->setContentsMargins(4, 1, 4, 1); crumbs->setSpacing(0);
     path_stack_->addWidget(breadcrumb_bar_); path_stack_->addWidget(ui->lineEdit_path);
     breadcrumb_bar_->installEventFilter(this); ui->lineEdit_path->installEventFilter(this);
     breadcrumb_bar_->setToolTip("点击目录逐级跳转；点击空白处或按 Alt+D 编辑完整路径");

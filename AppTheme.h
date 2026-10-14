@@ -6,6 +6,9 @@ QMainWindow, QDialog { background: #f5f7fb; }
 QLabel { color: #24344b; }
 QLineEdit, QPlainTextEdit, QComboBox { background: white; color: #24344b; border: 1px solid #cbd5e1; border-radius: 5px; padding: 5px; }
 QLineEdit:focus, QPlainTextEdit:focus { border: 1px solid #3b82f6; }
+QWidget#breadcrumb_bar { background: white; color: #24344b; border: 1px solid #cbd5e1; border-radius: 5px; }
+QWidget#breadcrumb_bar QToolButton { background: transparent; color: #24344b; border: none; border-radius: 3px; padding: 0 2px; }
+QWidget#breadcrumb_bar QToolButton:hover { background: #eaf2ff; }
 QPushButton { background: #eef3fa; color: #24466b; border: 1px solid #cbd5e1; border-radius: 5px; padding: 5px 10px; }
 QPushButton:hover { background: #dbeafe; border-color: #60a5fa; }
 QPushButton:disabled { color: #94a3b8; }
