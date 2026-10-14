@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
+#include "FileDetailsDelegate.h"
 
 #include <QInputDialog>
 #include <QMessageBox>
@@ -415,6 +416,11 @@ MainWindow::MainWindow(QString username, QWidget *parent)
 
     // 隐藏原来的独立搜索按钮
     ui->btn_search->hide();
+    ui->list_files->setItemDelegate(new FileDetailsDelegate(ui->list_files));
+    auto aiAction = menuBar()->addAction("DeepSeek 辅助");
+    connect(aiAction, &QAction::triggered, this, &MainWindow::open_ai_tools);
+    auto advancedAction = menuBar()->addAction("智能搜索 / 分类");
+    connect(advancedAction, &QAction::triggered, this, &MainWindow::open_advanced_tools);
     QHeaderView *header = ui->tree_dir->header();
 
     header->setStretchLastSection(false);

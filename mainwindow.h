@@ -13,6 +13,7 @@
 #include <QTimer>
 #include <QTreeWidgetItem>
 #include <QStringList>
+#include <QJsonObject>
 #include "Operation.h"
 
 QT_BEGIN_NAMESPACE
@@ -23,6 +24,7 @@ QT_END_NAMESPACE
 
 class MainWindow : public QMainWindow
 {
+    friend class AcceptanceProbe;
     Q_OBJECT
 
 public:
@@ -75,6 +77,10 @@ private slots:
 
 private:
 
+    QStringList classification_history_;
+    void open_advanced_tools();
+    void open_ai_tools();
+    QJsonObject ai_search_conditions_;
     Ui::MainWindow *ui;
 
     FileSystem *file_system;    // 底层文件系统核心

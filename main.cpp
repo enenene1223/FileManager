@@ -1,12 +1,16 @@
 #include "mainwindow.h"
 #include "logindialog.h"
 #include <QApplication>
+#include "AppTheme.h"
 #include <QLocale>
 #include <QTranslator>
+#include <QTimer>
 
 int main(int argc, char *argv[])
 {
     QApplication a(argc, argv);
+    a.setFont(QFont("Microsoft YaHei", 10));
+    a.setStyleSheet(app_theme());
 
     QTranslator translator;
     const QStringList uiLanguages = QLocale::system().uiLanguages();
@@ -21,6 +25,8 @@ int main(int argc, char *argv[])
     // 👇 使用循环，允许注销后重新弹出登录界面
     while (true) {
         LoginDialog login;
+        if (a.arguments().contains("--smoke-test"))
+            QTimer::singleShot(150, &login, &QDialog::reject);
         if (login.exec() != QDialog::Accepted) {
             return 0; // 用户直接点 X 关闭登录框，程序彻底结束
         }
