@@ -1,4 +1,5 @@
 #include "../mainwindow.h"
+#include "ui_mainwindow.h"
 #include <QApplication>
 #include <QDialog>
 #include <QCheckBox>
@@ -108,6 +109,19 @@ static void run() {
         dialog->accept();
     });
     window.open_ai_tools();
+    auto jump = fs->create_file(fs->find_by_path("/工作"), "jump.txt", "jump");
+    QTimer::singleShot(100, [&] {
+        auto dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        check(dialog, "jump dialog opens");
+        dialog->findChildren<QLineEdit*>()[0]->setText("jump");
+        for (auto button : dialog->findChildren<QPushButton*>()) if (button->text().startsWith("搜索 /")) button->click();
+        auto tree = dialog->findChild<QTreeWidget*>();
+        check(tree->topLevelItemCount() == 1, "jump result found");
+        tree->itemDoubleClicked(tree->topLevelItem(0), 0);
+    });
+    window.open_advanced_tools();
+    check(fs->get_path(fs->get_current_directory()) == "/工作", "double click navigates to parent");
+    check(window.ui->list_files->currentItem() && window.ui->list_files->currentItem()->data(Qt::UserRole).value<FileNode*>() == jump, "jump selects matching file");
     std::cout << "[PASS] 3000-file index/DFS parity, search, name priority, optional body, privacy, suffix, classification cancel/confirm/undo, encrypted persistence, missing AI key\n";
 }
 };
