@@ -1,6 +1,7 @@
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
 #include "FileDetailsDelegate.h"
+#include <QScopeGuard>
 
 #include <QInputDialog>
 #include <QMessageBox>
@@ -402,7 +403,7 @@ MainWindow::MainWindow(QString username, QWidget *parent)
 
     // 在搜索框右侧添加搜索图标
     QAction *searchAction = ui->lineEdit_search->addAction(
-        QIcon::fromTheme("edit-find"),
+        QIcon(":/icons/icons/search.svg"),
         QLineEdit::TrailingPosition
         );
 
@@ -416,11 +417,10 @@ MainWindow::MainWindow(QString username, QWidget *parent)
 
     // 隐藏原来的独立搜索按钮
     ui->btn_search->hide();
-    ui->list_files->setItemDelegate(new FileDetailsDelegate(ui->list_files));
+    setup_integrated_tools();
     auto aiAction = menuBar()->addAction("DeepSeek 辅助");
     connect(aiAction, &QAction::triggered, this, &MainWindow::open_ai_tools);
-    auto advancedAction = menuBar()->addAction("智能搜索 / 分类");
-    connect(advancedAction, &QAction::triggered, this, &MainWindow::open_advanced_tools);
+
     QHeaderView *header = ui->tree_dir->header();
 
     header->setStretchLastSection(false);
@@ -882,14 +882,15 @@ MainWindow::MainWindow(QString username, QWidget *parent)
                             new QToolButton(toolbar);
 
                         button->setText(text);
-                        button->setIcon(
-                            style()->standardIcon(iconType));
-
-                        button->setToolButtonStyle(
-                            Qt::ToolButtonTextUnderIcon);
+                        button->setToolTip(text);
+                        button->setAccessibleName(text);
+                        QString resource = text == "剪切" ? "cut" : text == "复制" ? "copy" : text == "重命名" ? "rename" : "delete";
+                        QIcon icon(":/icons/icons/" + resource + ".svg");
+                        if (icon.isNull()) { button->setIcon(style()->standardIcon(iconType)); button->setToolButtonStyle(Qt::ToolButtonTextUnderIcon); }
+                        else { button->setIcon(icon); button->setText({}); button->setToolButtonStyle(Qt::ToolButtonIconOnly); }
 
                         button->setAutoRaise(true);
-                        button->setMinimumWidth(56);
+                        button->setMinimumWidth(36);
 
                         layout->addWidget(button);
 
@@ -978,6 +979,8 @@ MainWindow::MainWindow(QString username, QWidget *parent)
                                 // 6. 统一执行目录跳转
                                 navigate_to(targetPath);
                             });
+
+                    menu.addAction("自动归类", this, &MainWindow::auto_classify);
 
                     // 仅文件夹显示固定操作
                     if (node->is_directory())
@@ -1360,6 +1363,10 @@ bool MainWindow::can_access_node(FileNode* node) const
 
 void MainWindow::refresh_file_list()
 {
+    search_index_valid_ = false; search_index_nodes_.clear(); search_name_index_.clear();
+    search_mode_ = false;
+    if (search_options_button_ && !ui->lineEdit_search->hasFocus()) search_options_button_->hide();
+    auto sortOnExit = qScopeGuard([this] { apply_file_sort(); });
     if (rename_click_timer) rename_click_timer->stop();
     last_clicked_item = nullptr;
     last_click_time = 0;
@@ -1672,6 +1679,7 @@ void MainWindow::refresh_tree()
     // 左侧只显示最后一级
     for (const QString& path : std::as_const(history_list))
     {
+        if (path == "/") continue;
         FileNode* node =
             file_system->find_by_path(
                 path.toStdString()
@@ -1724,6 +1732,9 @@ void MainWindow::refresh_tree()
     // ==================================================
     // 第五部分：真实目录树
     // ==================================================
+    auto separator = new QTreeWidgetItem(ui->tree_dir);
+    separator->setData(0, Qt::UserRole + 1, 99);
+    separator->setFlags(Qt::NoItemFlags);
     QTreeWidgetItem* rootItem =
         new QTreeWidgetItem(ui->tree_dir);
 
@@ -2729,51 +2740,8 @@ void MainWindow::on_btn_up_clicked()
 
 void MainWindow::on_btn_search_clicked()
 {
-    QString keyword = ui->lineEdit_search->text().trimmed();
-    if (keyword.isEmpty()) {
-        QMessageBox::warning(this, "提示", "请在搜索框中输入关键字！");
-        return;
-    }
-
-    QList<FileNode*> results;
-
-    file_system->traverse(
-        file_system->get_current_directory(),
-        [&results, &keyword,this](FileNode* node)
-        {
-
-            if (!can_access_node(node))
-                return;
-
-            QString name =
-                QString::fromStdString(
-                    node->get_name()
-                    );
-
-            if (name.contains(keyword,Qt::CaseInsensitive)){
-                results.append(node);
-            }
-        }
-    );
-
-    if (results.isEmpty()) {
-        QMessageBox::information(this, "搜索", "未找到匹配的内容！");
-        return;
-    }
-
-    // 把搜索结果展示在右侧列表中
-    ui->list_files->clear();
-
-    for (FileNode* node : std::as_const(results)) {
-        // 显示完整路径，方便区分不同文件夹下的同名文件
-        QString displayPath = QString::fromStdString(file_system->get_path(node));
-        QListWidgetItem* item = new QListWidgetItem(displayPath);
-        item->setData(Qt::UserRole, QVariant::fromValue(node));
-        ui->list_files->addItem(item);
-    }
-    ui->statusbar->showMessage(QString("共找到 %1 个结果").arg(results.size()), 3000);
+    run_smart_search();
 }
-
 
 // 统一的跳转逻辑
 void MainWindow::navigate_to(
@@ -2856,7 +2824,7 @@ void MainWindow::navigate_to(
         file_system->get_path(current);
 
     // 只有指定为有效访问时，才更新最近访问
-    if (recordHistory)
+    if (recordHistory && currentPath != "/")
     {
         QString qPath =
             QString::fromStdString(currentPath);
@@ -2970,6 +2938,16 @@ void MainWindow::on_list_files_itemDoubleClicked(
             "访问受限",
             "请先显示隐私文件并验证密码。"
             );
+        return;
+    }
+
+    if (search_mode_)
+    {
+        FileNode* destination = targetNode->is_directory() ? targetNode : targetNode->get_parent();
+        std::string previous = file_system->get_path(file_system->get_current_directory());
+        if (previous != file_system->get_path(destination)) { back_stack.push(previous); while (!forward_stack.empty()) forward_stack.pop(); }
+        navigate_to(file_system->get_path(destination));
+        for (int i = 0; i < ui->list_files->count(); ++i) if (ui->list_files->item(i)->data(Qt::UserRole).value<FileNode*>() == targetNode) ui->list_files->setCurrentRow(i);
         return;
     }
 
@@ -3375,6 +3353,7 @@ bool MainWindow::save_data()
     // 保存最近访问记录
     for (const QString& path : std::as_const(history_list))
     {
+        if (path == "/") continue;
         out << "H|"
             << path.toStdString()
             << "\n";
@@ -3938,6 +3917,7 @@ void MainWindow::load_data()
     file_system = staging.release();
     delete oldSystem;
     history_list = stagedHistory;
+    history_list.removeAll("/");
     history_replace_index = stagedHistoryIndex;
     crypto_salt_ = stagedCryptoSalt;
     crypto_iterations_ = stagedCryptoIterations;

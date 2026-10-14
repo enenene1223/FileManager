@@ -80,7 +80,7 @@ void MainWindow::open_ai_tools()
             if (operation == 0) {
                 ai_search_conditions_ = obj;
                 ui->lineEdit_search->setText(obj.value("keywords").toString().left(1000));
-                dialog.accept(); open_advanced_tools(); return;
+                dialog.accept(); run_smart_search(); return;
             }
             auto target = candidates.value(obj.value("path").toString(), nullptr);
             if (!target || !file_system->contains_active_node(node) || !file_system->contains_active_node(target) || !can_access_node(node) || !can_access_node(target) || is_privacy_protected(node) || !file_system->can_move(node, target)) { output->setPlainText("没有有效推荐，本地文件未移动。"); return; }
@@ -90,6 +90,7 @@ void MainWindow::open_ai_tools()
             if (!file_system->move_node(node, target)) { output->setPlainText("本地安全检查拒绝移动。"); return; }
             op.new_path = file_system->get_path(node); undo_stack.push(op);
             classification_history_.append(QString::fromStdString(op.old_path + " → " + op.new_path));
+            classification_history_privacy_.append(false);
             output->setPlainText(save_data() ? "已移动并保存，可在主窗口撤销。" : "移动已完成，但保存失败。请撤销或重试保存。");
             refresh_tree(); refresh_file_list();
         });

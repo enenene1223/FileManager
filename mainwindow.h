@@ -14,6 +14,10 @@
 #include <QTreeWidgetItem>
 #include <QStringList>
 #include <QJsonObject>
+#include <QHeaderView>
+#include <QPushButton>
+#include <QHash>
+#include <QSet>
 #include "Operation.h"
 
 QT_BEGIN_NAMESPACE
@@ -34,6 +38,7 @@ public:
 
 protected:
     void closeEvent(QCloseEvent *event) override;
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 
 private slots:
@@ -78,7 +83,24 @@ private slots:
 private:
 
     QStringList classification_history_;
-    void open_advanced_tools();
+    QList<bool> classification_history_privacy_;
+    void setup_integrated_tools();
+    void run_smart_search();
+    QList<QPair<FileNode*, int>> search_hits(bool indexed) const;
+    void auto_classify();
+    void apply_file_sort();
+    QHeaderView* file_header_ = nullptr;
+    QPushButton* search_options_button_ = nullptr;
+    bool search_mode_ = false;
+    bool search_global_ = false;
+    bool search_body_ = false;
+    int search_type_ = 0;
+    QString search_after_, search_before_, search_min_, search_max_;
+    int file_sort_ = 0;
+    bool sort_descending_ = false;
+    mutable bool search_index_valid_ = false;
+    mutable QList<FileNode*> search_index_nodes_;
+    mutable QHash<QString, QSet<FileNode*>> search_name_index_;
     void open_ai_tools();
     QJsonObject ai_search_conditions_;
     Ui::MainWindow *ui;
