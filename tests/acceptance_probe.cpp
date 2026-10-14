@@ -12,6 +12,8 @@
 #include <QFile>
 #include <QElapsedTimer>
 #include <QFocusEvent>
+#include <QMouseEvent>
+#include <QToolButton>
 #include <iostream>
 #include <cstdlib>
 class AcceptanceProbe {
@@ -102,10 +104,63 @@ static void run() {
     check(window.ui->list_files->count() == 1, "jump result"); window.on_list_files_itemDoubleClicked(window.ui->list_files->item(0));
     check(fs->get_current_directory() == work && window.ui->list_files->currentItem()->data(Qt::UserRole).value<FileNode*>() == jump, "search result jumps and selects file");
     window.navigate_to("/"); window.grab().save("integrated-tools.png");
+    check(window.ui->tree_dir->indentation() == 14, "compact tree indentation");
+    window.on_tree_dir_itemClicked(window.ui->tree_dir->topLevelItem(0), 0);
+    check(window.recycle_mode && window.classify_button_->isHidden(), "recycle hides classification");
+    window.navigate_to("/"); check(!window.classify_button_->isHidden(), "normal view restores classification");
+    select(window, report);
+    QPoint blank(window.ui->list_files->viewport()->width() / 2, window.ui->list_files->viewport()->height() - 10);
+    check(!window.ui->list_files->itemAt(blank), "test point is blank");
+    QMouseEvent click(QEvent::MouseButtonPress, QPointF(blank), QPointF(window.ui->list_files->viewport()->mapToGlobal(blank)), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(window.ui->list_files->viewport(), &click);
+    check(window.ui->list_files->selectedItems().isEmpty() && !window.ui->list_files->currentItem(), "blank click clears selection and current item");
+
+    auto games = fs->create_folder(root, "Games"); fs->create_folder(root, "Photos");
+    auto game = fs->create_file(root, "game.txt", ""); window.refresh_file_list(); select(window, game);
+    QTimer::singleShot(50, [] {
+        auto dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget()); check(dialog && dialog->objectName() == "classification_dialog", "game recommendation dialog");
+        auto choices = dialog->findChild<QListWidget*>("classification_targets"); check(choices->item(0)->text() == "/Games", "game.txt ranks Games first");
+        for (int i = 0; i < choices->count(); ++i) check(choices->item(i)->text() != "/Photos", "unrelated category excluded");
+        dialog->findChild<QPushButton*>("confirm_classification")->click();
+    });
+    window.auto_classify(); check(fs->get_path(game) == "/Games/game.txt", "confirmed game classification");
+    window.on_btn_undo_clicked(); check(fs->get_path(game) == "/game.txt", "game move undo");
+
+    window.toggle_pin(report); check(fs->is_pinned(report), "files can be pinned"); check(window.save_data(), "pin save");
+    MainWindow pinReload("acceptance"); check(pinReload.file_system->is_pinned(pinReload.file_system->find_by_path("/报告.txt")), "file pin persists");
+    window.navigate_to("/工作文档");
+    QTreeWidgetItem* pinned = nullptr;
+    for (int i = 0; i < window.ui->tree_dir->topLevelItemCount(); ++i) if (window.ui->tree_dir->topLevelItem(i)->data(0, Qt::UserRole).value<FileNode*>() == report) pinned = window.ui->tree_dir->topLevelItem(i);
+    check(pinned, "pinned file sidebar entry"); window.on_tree_dir_itemClicked(pinned, 0);
+    check(fs->get_current_directory() == root && window.ui->list_files->currentItem()->data(Qt::UserRole).value<FileNode*>() == report, "pinned file locates and selects");
+
+    auto nested = fs->create_folder(work, "Levels"); window.navigate_to("/"); window.forward_stack.push("/benchmark");
+    auto backSize = window.back_stack.size();
+    window.edit_path(); window.ui->lineEdit_path->setText("/此电脑/工作文档/Levels"); window.ui->lineEdit_path->returnPressed(); QApplication::processEvents();
+    check(fs->get_current_directory() == nested && window.back_stack.size() == backSize + 1 && window.forward_stack.empty(), "typed path validates then updates history");
+    window.grab().save("breadcrumb-preview.png");
+    QToolButton* parentCrumb = nullptr;
+    for (auto button : window.breadcrumb_bar_->findChildren<QToolButton*>()) if (!button->isHidden() && button->property("path").toString() == "/工作文档") parentCrumb = button;
+    check(parentCrumb, "parent breadcrumb exists"); parentCrumb->click(); QApplication::processEvents();
+    check(fs->get_current_directory() == work, "breadcrumb jumps to ancestor");
+    window.on_btn_back_clicked(); check(fs->get_current_directory() == nested, "breadcrumb back history");
+    window.on_btn_forward_clicked(); check(fs->get_current_directory() == work, "breadcrumb forward history");
+    auto failBack = window.back_stack.size(), failForward = window.forward_stack.size();
+    for (auto invalid : QStringList{"relative/path", "/missing-directory", "/game.txt", "/隐私"}) {
+        window.edit_path(); window.ui->lineEdit_path->setText(invalid);
+        QTimer::singleShot(50, [] { auto box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget()); check(box, "invalid path warning"); box->accept(); });
+        window.ui->lineEdit_path->returnPressed(); QApplication::processEvents();
+        check(fs->get_current_directory() == work && window.ui->lineEdit_path->text() == "/此电脑/工作文档", "failed path restores current address");
+        check(window.back_stack.size() == failBack && window.forward_stack.size() == failForward, "failed path preserves navigation stacks");
+    }
+    check(!window.history_list.contains("/"), "breadcrumb root excluded from recent history");
+    window.navigate_to("/"); window.file_header_->sectionClicked(0); window.file_header_->sectionClicked(0); QApplication::processEvents();
+    check(window.file_header_->sortIndicatorSection() == 0 && window.file_header_->sortIndicatorOrder() == Qt::DescendingOrder, "header sort direction toggles");
+    window.grab().save("navigation-and-header.png");
     qunsetenv("DEEPSEEK_API_KEY");
     QTimer::singleShot(50, [] { auto dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget()); for (auto button : dialog->findChildren<QPushButton*>()) if (button->text().startsWith("发送")) button->click(); bool fallback = false; for (auto text : dialog->findChildren<QPlainTextEdit*>()) fallback |= text->toPlainText().contains("未配置"); check(fallback, "missing AI key fallback"); dialog->accept(); });
     window.open_ai_tools();
-    std::cout << "[PASS] integrated search/options/sorting, multiple classification targets/cancel/move/undo/history, headers/icons/rename, root history, privacy/persistence, result jump, AI fallback\n";
+    std::cout << "[PASS] search/sort/classification/game-Games/undo, breadcrumb/invalid-path/history, pin/persistence/sidebar, blank selection, recycle visibility, privacy/AES, AI fallback\n";
 }
 };
 int main(int argc, char** argv) {

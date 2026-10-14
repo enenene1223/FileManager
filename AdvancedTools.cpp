@@ -16,18 +16,77 @@
 #include <QApplication>
 #include <QScrollBar>
 #include <QDateTime>
+#include <QMouseEvent>
+#include <QKeyEvent>
+#include <QToolButton>
+#include <QLabel>
+#include <QShortcut>
+#include <QFileInfo>
 #include <climits>
 #include <algorithm>
+
+static QSet<QString> category_words(QString text)
+{
+    text.replace(QRegularExpression("([a-z])([A-Z])"), "\\1 \\2");
+    const QSet<QString> ignored{"txt", "pdf", "doc", "docx", "file", "files", "folder"};
+    const QHash<QString, QString> aliases{{"gaming", "game"}, {"studies", "study"}, {"classes", "class"}, {"photos", "photo"}, {"pictures", "picture"}, {"movies", "movie"}};
+    QSet<QString> words;
+    for (auto word : text.toCaseFolded().split(QRegularExpression("[^\\p{L}\\p{N}]+"), Qt::SkipEmptyParts)) {
+        if (ignored.contains(word) || word.size() < 2) continue;
+        if (aliases.contains(word)) word = aliases.value(word);
+        else if (QRegularExpression("^[a-z]+$").match(word).hasMatch()) {
+            if (word.size() > 4 && word.endsWith("ies")) word = word.left(word.size() - 3) + "y";
+            else if (word.size() > 3 && word.endsWith('s') && !word.endsWith("ss")) word.chop(1);
+        }
+        words.insert(word);
+    }
+    return words;
+}
+
+static int category_score(const QString& names, const QString& content, const QString& directory, const QString& path)
+{
+    const auto nameWords = category_words(names), bodyWords = category_words(content);
+    const auto leafWords = category_words(directory), pathWords = category_words(path);
+    int score = 0;
+    for (auto word : leafWords) { if (nameWords.contains(word)) score += 8; if (bodyWords.contains(word)) score += 2; }
+    for (auto word : pathWords - leafWords) { if (nameWords.contains(word)) score += 2; if (bodyWords.contains(word)) ++score; }
+    const QStringList topics{
+        "学习 课程 作业 考试 笔记 数学 英语 study school homework note course exam",
+        "工作 项目 会议 报告 合同 work project meeting report contract",
+        "生活 旅行 旅游 购物 日记 travel life diary shopping",
+        "代码 编程 cpp python qt 软件 code programming software",
+        "游戏 游戏攻略 攻略 电竞 娱乐 game gaming steam walkthrough",
+        "音乐 歌曲 音频 music song audio",
+        "照片 图片 摄影 相册 photo picture image photography",
+        "视频 电影 剪辑 video movie film",
+        "财务 发票 账单 预算 finance invoice bill budget"};
+    auto has = [](const QString& text, const QSet<QString>& tokens, const QString& term) {
+        return QRegularExpression("^[a-z]+$").match(term).hasMatch() ? tokens.contains(term) : text.contains(term, Qt::CaseInsensitive);
+    };
+    for (auto topic : topics) {
+        auto terms = category_words(topic); bool related = false;
+        for (auto term : terms) if (has(directory, leafWords, term)) related = true;
+        if (related) for (auto term : terms) { if (has(names, nameWords, term)) score += 3; if (has(content, bodyWords, term)) ++score; }
+    }
+    // Chinese directory names often form part of a longer title rather than separate tokens.
+    if (QRegularExpression("[\\p{Han}]").match(directory).hasMatch() && directory.size() >= 2) {
+        if (names.contains(directory, Qt::CaseInsensitive)) score += 6;
+        if (content.contains(directory, Qt::CaseInsensitive)) score += 2;
+    }
+    return score;
+}
 
 void MainWindow::setup_integrated_tools()
 {
     auto panel = new QWidget(ui->splitter_main);
     auto box = new QVBoxLayout(panel); box->setContentsMargins(0, 0, 0, 0); box->setSpacing(0);
     auto headerRow = new QHBoxLayout; headerRow->setContentsMargins(1, 0, 1, 0);
-    file_header_ = new QHeaderView(Qt::Horizontal, panel);
+    file_header_ = new FileHeaderView(Qt::Horizontal, panel);
     file_header_->setObjectName("file_header");
     auto model = new QStandardItemModel(0, 3, file_header_);
     model->setHorizontalHeaderLabels({"名称", "修改日期", "类型"});
+    for (int i = 0; i < 3; ++i) model->setHeaderData(i, Qt::Horizontal, "点击按此列排序；再次点击切换升序 / 降序", Qt::ToolTipRole);
+    file_header_->setCursor(Qt::PointingHandCursor);
     file_header_->setModel(model); file_header_->setSectionsClickable(true);
     file_header_->setDefaultAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     file_header_->setSectionResizeMode(0, QHeaderView::Stretch);
@@ -44,6 +103,22 @@ void MainWindow::setup_integrated_tools()
     ui->list_files->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
     ui->list_files->setItemDelegate(new FileDetailsDelegate(file_header_, ui->list_files));
     ui->tree_dir->setItemDelegate(new DirectorySectionDelegate(ui->tree_dir));
+    ui->tree_dir->setIndentation(14);
+    ui->list_files->viewport()->installEventFilter(this);
+    ui->tree_dir->viewport()->installEventFilter(this);
+
+    path_stack_ = new QStackedWidget(this); path_stack_->setObjectName("path_stack");
+    path_stack_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred); path_stack_->setFixedHeight(30);
+    auto previousPathItem = ui->horizontalLayout->replaceWidget(ui->lineEdit_path, path_stack_); delete previousPathItem;
+    breadcrumb_bar_ = new QWidget(path_stack_); breadcrumb_bar_->setObjectName("breadcrumb_bar");
+    auto crumbs = new QHBoxLayout(breadcrumb_bar_); crumbs->setContentsMargins(4, 0, 4, 0); crumbs->setSpacing(0);
+    path_stack_->addWidget(breadcrumb_bar_); path_stack_->addWidget(ui->lineEdit_path);
+    breadcrumb_bar_->installEventFilter(this); ui->lineEdit_path->installEventFilter(this);
+    breadcrumb_bar_->setToolTip("点击目录逐级跳转；点击空白处或按 Alt+D 编辑完整路径");
+    connect(ui->lineEdit_path, &QLineEdit::textChanged, this, [this] { if (!ui->lineEdit_path->hasFocus()) QTimer::singleShot(0, this, &MainWindow::sync_breadcrumbs); });
+    connect(ui->lineEdit_path, &QLineEdit::returnPressed, this, [this] { QTimer::singleShot(0, this, &MainWindow::sync_breadcrumbs); });
+    auto pathShortcut = new QShortcut(QKeySequence("Alt+D"), this);
+    connect(pathShortcut, &QShortcut::activated, this, &MainWindow::edit_path);
 
     for (auto pair : {qMakePair(ui->btn_cut, QString("cut")), qMakePair(ui->btn_copy, QString("copy")),
                       qMakePair(ui->btn_paste, QString("paste")), qMakePair(ui->btn_rename, QString("rename")),
@@ -56,6 +131,7 @@ void MainWindow::setup_integrated_tools()
     ui->btn_undo->setFixedSize(ui->btn_new->size()); ui->btn_reset->setFixedSize(ui->btn_new->size());
     auto sortButton = new QPushButton("排序", this); sortButton->setObjectName("btn_sort");
     auto classifyButton = new QPushButton("自动归类", this); classifyButton->setObjectName("btn_classify");
+    classify_button_ = classifyButton;
     search_options_button_ = new QPushButton("搜索选项", this); search_options_button_->setObjectName("btn_search_options");
     for (auto button : {sortButton, classifyButton, search_options_button_}) button->setFixedHeight(28);
     // Reuse the existing row; recycle actions retain their original visibility logic.
@@ -131,6 +207,22 @@ void MainWindow::setup_integrated_tools()
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event)
 {
+    if ((watched == ui->list_files->viewport() || watched == ui->tree_dir->viewport()) && event->type() == QEvent::MouseButtonPress) {
+        auto mouse = static_cast<QMouseEvent*>(event);
+        if (mouse->button() == Qt::LeftButton) {
+            bool blank = watched == ui->list_files->viewport() ? !ui->list_files->itemAt(mouse->position().toPoint()) : !ui->tree_dir->itemAt(mouse->position().toPoint());
+            if (blank) {
+                if (rename_click_timer) rename_click_timer->stop(); last_clicked_item = nullptr; last_click_time = 0;
+                ui->list_files->clearSelection(); ui->list_files->setCurrentItem(nullptr);
+                if (watched == ui->tree_dir->viewport()) { ui->tree_dir->clearSelection(); ui->tree_dir->setCurrentItem(nullptr); }
+            }
+        }
+    }
+    if (watched == breadcrumb_bar_ && event->type() == QEvent::MouseButtonPress) { edit_path(); return true; }
+    if (watched == ui->lineEdit_path) {
+        if (event->type() == QEvent::KeyPress && static_cast<QKeyEvent*>(event)->key() == Qt::Key_Escape) { sync_breadcrumbs(); return true; }
+        if (event->type() == QEvent::FocusOut) QTimer::singleShot(0, this, [this] { if (!ui->lineEdit_path->hasFocus() && !QApplication::activeModalWidget()) sync_breadcrumbs(); });
+    }
     if (watched == ui->lineEdit_search) {
         if (event->type() == QEvent::FocusIn) search_options_button_->show();
         if (event->type() == QEvent::FocusOut) QTimer::singleShot(0, this, [this] {
@@ -138,6 +230,51 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
         });
     }
     return QMainWindow::eventFilter(watched, event);
+}
+
+void MainWindow::edit_path()
+{
+    if (!file_system || recycle_mode || privacy_overview_mode) return;
+    auto path = QString::fromStdString(file_system->get_path(file_system->get_current_directory()));
+    ui->lineEdit_path->setText(path == "/" ? "/此电脑" : "/此电脑" + path);
+    path_stack_->setCurrentWidget(ui->lineEdit_path); ui->lineEdit_path->setFocus(); ui->lineEdit_path->selectAll();
+}
+
+void MainWindow::sync_breadcrumbs()
+{
+    if (!file_system || !breadcrumb_bar_) return;
+    auto layout = static_cast<QHBoxLayout*>(breadcrumb_bar_->layout());
+    while (auto item = layout->takeAt(0)) { if (item->widget()) { item->widget()->hide(); item->widget()->deleteLater(); } delete item; }
+    const auto currentPath = QString::fromStdString(file_system->get_path(file_system->get_current_directory()));
+    QString display = recycle_mode ? "回收站" : privacy_overview_mode ? "隐私文件" : currentPath == "/" ? "/此电脑" : "/此电脑" + currentPath;
+    { QSignalBlocker blocker(ui->lineEdit_path); ui->lineEdit_path->setText(display); }
+    auto go = [this](QString path) { ui->lineEdit_path->setText(path == "/" ? "/此电脑" : "/此电脑" + path); ui->lineEdit_path->returnPressed(); };
+    auto add = [&](const QString& title, const QString& path) {
+        auto button = new QToolButton(breadcrumb_bar_); button->setObjectName("breadcrumb");
+        button->setText(button->fontMetrics().elidedText(title, Qt::ElideRight, 110)); button->setToolTip(title); button->setProperty("path", path); button->setAutoRaise(true);
+        button->setFixedWidth(qMin(128, button->fontMetrics().horizontalAdvance(button->text()) + 20)); button->setFixedHeight(28); layout->addWidget(button);
+        button->setCursor(Qt::PointingHandCursor); button->show();
+        connect(button, &QToolButton::clicked, this, [go, path] { go(path); }); return button;
+    };
+    if (recycle_mode || privacy_overview_mode) add(display, "/")->setEnabled(false);
+    else {
+        add("此电脑", "/"); auto parts = currentPath.split('/', Qt::SkipEmptyParts); QString path;
+        QList<QPair<QString, QString>> segments;
+        for (auto part : parts) { path += "/" + part; segments.append(qMakePair(part, path)); }
+        auto arrow = [&] { auto label = new QLabel(" › ", breadcrumb_bar_); label->setFixedWidth(14); layout->addWidget(label); label->show(); };
+        int begin = 0;
+        int requiredWidth = 76;
+        for (auto segment : segments) requiredWidth += qMin(128, breadcrumb_bar_->fontMetrics().horizontalAdvance(segment.first) + 20) + 14;
+        if (segments.size() > 3 || (segments.size() > 2 && requiredWidth > path_stack_->width())) {
+            arrow(); auto overflow = new QToolButton(breadcrumb_bar_); overflow->setText("…"); overflow->setToolTip("上级目录"); overflow->setAutoRaise(true); overflow->setPopupMode(QToolButton::InstantPopup);
+            auto menu = new QMenu(overflow);
+            begin = segments.size() - 2;
+            for (int i = 0; i < begin; ++i) { auto segment = segments[i]; menu->addAction(segment.first, this, [go, segment] { go(segment.second); }); }
+            overflow->setFixedWidth(32); overflow->setMenu(menu); layout->addWidget(overflow); overflow->show();
+        }
+        for (int i = begin; i < segments.size(); ++i) { arrow(); add(segments[i].first, segments[i].second); }
+    }
+    layout->addStretch(); path_stack_->setCurrentWidget(breadcrumb_bar_);
 }
 
 QList<QPair<FileNode*, int>> MainWindow::search_hits(bool indexed) const
@@ -252,17 +389,18 @@ void MainWindow::auto_classify()
     }
     auto node = item->data(Qt::UserRole).value<FileNode*>();
     if (recycle_mode || !file_system->contains_active_node(node) || !can_access_node(node)) { QMessageBox::warning(this, "无法归类", "请选择有权访问的普通项目。"); return; }
-    QString text; bool allowed = true;
-    file_system->traverse(node, [&](FileNode* n) { if (!can_access_node(n)) { allowed = false; return; } if (text.size() < 16000) text += QString::fromStdString(n->get_name() + " " + n->get_content()).left(16000 - text.size()) + ' '; });
+    QString names, content; bool allowed = true;
+    file_system->traverse(node, [&](FileNode* n) {
+        if (!can_access_node(n)) { allowed = false; return; }
+        names += (n->is_directory() ? QString::fromStdString(n->get_name()) : QFileInfo(QString::fromStdString(n->get_name())).completeBaseName()) + ' ';
+        if (content.size() < 16000) content += QString::fromStdString(n->get_content()).left(16000 - content.size()) + ' ';
+    });
     if (!allowed) { QMessageBox::warning(this, "无法归类", "所选目录包含尚未授权访问的隐私项目。"); return; }
-    text = text.toLower(); struct Target { FileNode* node; int score; };
+    struct Target { FileNode* node; int score; };
     QList<Target> targets;
-    QStringList groups{"学习 课程 作业 考试 笔记 数学 英语 study school homework notes", "工作 项目 会议 报告 合同 work project meeting report", "生活 旅行 旅游 购物 日记 travel life diary", "代码 编程 cpp python qt 软件 code programming"};
     file_system->traverse(file_system->get_root(), [&](FileNode* d) {
         if (!d->is_directory() || d == node->get_parent() || !can_access_node(d) || !file_system->can_move(node, d) || file_system->has_name_conflict(d, node->get_name())) return;
-        auto semantic = QString::fromStdString(file_system->get_path(d)).toLower(); int score = 0;
-        for (auto group : groups) { auto words = group.split(' '); bool directoryMatch = false; for (auto word : words) if (semantic.contains(word)) directoryMatch = true; if (directoryMatch) for (auto word : words) if (text.contains(word)) ++score; }
-        auto leaf = QString::fromStdString(d->get_name()).toLower(); if (leaf.size() >= 2 && text.contains(leaf)) score += 2;
+        int score = category_score(names, content, QString::fromStdString(d->get_name()), QString::fromStdString(file_system->get_path(d)));
         if (score) targets.append({d, score});
     });
     std::sort(targets.begin(), targets.end(), [this](const Target& a, const Target& b) { return a.score != b.score ? a.score > b.score : file_system->get_path(a.node) < file_system->get_path(b.node); });

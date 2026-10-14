@@ -982,8 +982,8 @@ MainWindow::MainWindow(QString username, QWidget *parent)
 
                     menu.addAction("自动归类", this, &MainWindow::auto_classify);
 
-                    // 仅文件夹显示固定操作
-                    if (node->is_directory())
+                    // 文件和文件夹均可固定
+                    if (file_system->contains_active_node(node) && can_access_node(node))
                     {
                         QAction* pinAction = menu.addAction(
                             node->is_pinned()
@@ -1365,6 +1365,8 @@ void MainWindow::refresh_file_list()
 {
     search_index_valid_ = false; search_index_nodes_.clear(); search_name_index_.clear();
     search_mode_ = false;
+    if (classify_button_) classify_button_->setVisible(!recycle_mode);
+    sync_breadcrumbs();
     if (search_options_button_ && !ui->lineEdit_search->hasFocus()) search_options_button_->hide();
     auto sortOnExit = qScopeGuard([this] { apply_file_sort(); });
     if (rename_click_timer) rename_click_timer->stop();
@@ -1656,7 +1658,7 @@ void MainWindow::refresh_tree()
         item->setIcon(0, makeFileNodeIcon(node));
 
         // 第二列：置顶符号
-        item->setText(1, "📌");
+        item->setIcon(1, QIcon(":/icons/icons/pin.svg"));
 
         item->setTextAlignment(
             1,
@@ -3077,8 +3079,7 @@ void MainWindow::on_tree_dir_itemClicked(
         FileNode* candidate =
             item->data(0, Qt::UserRole).value<FileNode*>();
 
-        if (candidate == nullptr ||
-            !candidate->is_directory() ||
+        if (!file_system->contains_active_node(candidate) ||
             !can_access_node(candidate))
         {
             QMessageBox::warning(
@@ -3146,9 +3147,14 @@ void MainWindow::on_tree_dir_itemClicked(
     FileNode* clickedNode =
         item->data(0,Qt::UserRole).value<FileNode*>();
 
-    if (clickedNode == nullptr ||
-        !clickedNode->is_directory())
+    if (!file_system->contains_active_node(clickedNode) || !can_access_node(clickedNode)) return;
+    if (!clickedNode->is_directory())
     {
+        auto parentPath = file_system->get_path(clickedNode->get_parent());
+        auto oldPath = file_system->get_path(file_system->get_current_directory());
+        if (parentPath != oldPath) { back_stack.push(oldPath); while (!forward_stack.empty()) forward_stack.pop(); }
+        navigate_to(parentPath);
+        for (int i = 0; i < ui->list_files->count(); ++i) if (ui->list_files->item(i)->data(Qt::UserRole).value<FileNode*>() == clickedNode) ui->list_files->setCurrentRow(i);
         return;
     }
 
@@ -3975,7 +3981,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
 
 void MainWindow::toggle_pin(FileNode* node)
 {
-    if (node == nullptr)
+    if (!file_system->contains_active_node(node) || !can_access_node(node))
         return;
 
     bool newState = !file_system->is_pinned(node);

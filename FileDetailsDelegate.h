@@ -6,7 +6,28 @@
 #include <QLineEdit>
 #include <QTimer>
 #include <QPointer>
+#include <QStyleOptionHeader>
 #include "FileNode.h"
+
+class FileHeaderView : public QHeaderView {
+public:
+    using QHeaderView::QHeaderView;
+protected:
+    void paintSection(QPainter* painter, const QRect& rect, int section) const override {
+        QStyleOptionHeader option; initStyleOption(&option); option.rect = rect; option.section = section;
+        option.text = model()->headerData(section, Qt::Horizontal).toString();
+        option.textAlignment = Qt::AlignLeft | Qt::AlignVCenter; option.sortIndicator = QStyleOptionHeader::None;
+        style()->drawControl(QStyle::CE_Header, &option, painter, this);
+        if (isSortIndicatorShown() && sortIndicatorSection() == section) {
+            const int x = qMin(rect.right() - 14, rect.left() + fontMetrics().horizontalAdvance(option.text) + 17);
+            const int y = rect.center().y();
+            QPolygon triangle;
+            if (sortIndicatorOrder() == Qt::AscendingOrder) triangle << QPoint(x - 4, y + 2) << QPoint(x + 4, y + 2) << QPoint(x, y - 3);
+            else triangle << QPoint(x - 4, y - 2) << QPoint(x + 4, y - 2) << QPoint(x, y + 3);
+            painter->save(); painter->setPen(Qt::NoPen); painter->setBrush(QColor("#315b87")); painter->drawPolygon(triangle); painter->restore();
+        }
+    }
+};
 
 class FileDetailsDelegate : public QStyledItemDelegate {
     QHeaderView* header_;

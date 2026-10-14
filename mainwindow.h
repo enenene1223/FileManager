@@ -18,6 +18,7 @@
 #include <QPushButton>
 #include <QHash>
 #include <QSet>
+#include <QStackedWidget>
 #include "Operation.h"
 
 QT_BEGIN_NAMESPACE
@@ -91,6 +92,11 @@ private:
     void apply_file_sort();
     QHeaderView* file_header_ = nullptr;
     QPushButton* search_options_button_ = nullptr;
+    QPushButton* classify_button_ = nullptr;
+    QStackedWidget* path_stack_ = nullptr;
+    QWidget* breadcrumb_bar_ = nullptr;
+    void sync_breadcrumbs();
+    void edit_path();
     bool search_mode_ = false;
     bool search_global_ = false;
     bool search_body_ = false;
@@ -105,7 +111,7 @@ private:
     QJsonObject ai_search_conditions_;
     Ui::MainWindow *ui;
 
-    FileSystem *file_system;    // 底层文件系统核心
+    FileSystem *file_system = nullptr;    // 底层文件系统核心
 
     bool has_privacy_access = false; // 当前会话是否已通过隐私密码验证
     bool show_privacy_mode = false;  // 是否处于“显示隐私文件”模式
