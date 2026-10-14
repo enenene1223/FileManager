@@ -41,8 +41,6 @@
 #include <QCryptographicHash>
 #include <QFile>
 #include <QTextStream>
-#include <QInputDialog>
-#include <QMessageBox>
 
 #include <QDialog> // 文件属性
 #include <QDialogButtonBox>
@@ -59,6 +57,15 @@
 #include <QDir>
 #include <QByteArray>
 
+#include <QPlainTextEdit> // 文本编辑
+#include <QPushButton>
+
+#include <QSaveFile> // save
+#include <ostream>
+#include <memory>
+#include <QFileInfo>
+#include "PrivacyCrypto.h"
+
 // 路径显示
 static QString toDisplayPath(const QString& path)
 {
@@ -69,6 +76,51 @@ static QString toDisplayPath(const QString& path)
 }
 
 
+
+// 文件内容存档辅助函数
+// Base64 用来确保文件内容不会破坏
+// 将任意字节内容编码为 Base64
+static std::string encodePlainContent(
+    const std::string& content)
+{
+    QByteArray bytes(
+        content.data(),
+        static_cast<qsizetype>(content.size())
+        );
+
+    return bytes.toBase64().toStdString();
+}
+
+// 将 Base64 解码为原始字节
+// 返回 false 表示内容格式不合法
+static bool decodeBase64Content(
+    const std::string& encoded,
+    std::string& output)
+{
+    QByteArray input =
+        QByteArray::fromStdString(encoded);
+
+    QByteArray decoded =
+        QByteArray::fromBase64(input);
+
+    // 本项目保存时使用标准 Base64，
+    // 因此重新编码后应与原始字符串一致。
+    if (decoded.toBase64() != input)
+        return false;
+
+    output = decoded.toStdString();
+    return true;
+}
+
+// 处理旧存档行末可能存在的 CR 字符
+static void removeTrailingCR(std::string& value)
+{
+    if (!value.empty() && value.back() == '\r')
+        value.pop_back();
+}
+
+
+// 图标
 static QIcon makeFileNodeIcon(const FileNode* node)
 {
     if (node == nullptr)
@@ -120,6 +172,192 @@ static QIcon makeFileNodeIcon(const FileNode* node)
 }
 
 
+
+class TxtEditorDialog : public QDialog
+{
+public:
+    TxtEditorDialog(
+        FileSystem* fileSystem,
+        FileNode* fileNode,
+        std::function<bool()> saveCallback,
+        QWidget* parent = nullptr
+        )
+        : QDialog(parent)
+        , file_system_(fileSystem)
+        , file_node_(fileNode)
+        , save_callback_(std::move(saveCallback))
+    {
+        setWindowTitle(
+            "TXT 编辑器 - " +
+            QString::fromStdString(file_node_->get_name())
+            );
+
+        resize(720, 520);
+        setMinimumSize(420, 300);
+
+        auto* layout = new QVBoxLayout(this);
+
+        // 多行文本编辑框
+        editor_ = new QPlainTextEdit(this);
+
+        editor_->setPlaceholderText(
+            "在这里输入 TXT 文件内容..."
+            );
+
+        editor_->setPlainText(
+            QString::fromStdString(
+                file_node_->get_content()
+                )
+            );
+
+        // 初次加载内容不算用户修改
+        editor_->document()->setModified(false);
+
+        layout->addWidget(editor_);
+
+        // 保存和关闭按钮
+        auto* buttons = new QDialogButtonBox(
+            QDialogButtonBox::Save |
+                QDialogButtonBox::Close,
+            this
+            );
+
+        layout->addWidget(buttons);
+
+        QPushButton* saveButton =
+            buttons->button(QDialogButtonBox::Save);
+
+        QPushButton* closeButton =
+            buttons->button(QDialogButtonBox::Close);
+
+        saveButton->setText("保存");
+        closeButton->setText("关闭");
+
+        connect(
+            saveButton,
+            &QPushButton::clicked,
+            this,
+            [this]()
+            {
+                if (saveChanges())
+                {
+                    QMessageBox::information(
+                        this,
+                        "保存",
+                        "文件内容已更新，并已执行数据保存。"
+                        );
+                }
+            }
+            );
+
+        connect(
+            closeButton,
+            &QPushButton::clicked,
+            this,
+            &QDialog::close
+            );
+    }
+
+protected:
+    void closeEvent(QCloseEvent* event) override
+    {
+        if (!editor_->document()->isModified())
+        {
+            event->accept();
+            return;
+        }
+
+        QMessageBox::StandardButton choice =
+            QMessageBox::warning(
+                this,
+                "内容尚未保存",
+                "文件内容已经修改，是否保存？",
+                QMessageBox::Save |
+                    QMessageBox::Discard |
+                    QMessageBox::Cancel,
+                QMessageBox::Save
+                );
+
+        if (choice == QMessageBox::Cancel)
+        {
+            event->ignore();
+            return;
+        }
+
+        if (choice == QMessageBox::Save)
+        {
+            if (!saveChanges())
+            {
+                event->ignore();
+                return;
+            }
+        }
+
+        // Discard 直接关闭，内存中的原内容不变
+        event->accept();
+    }
+
+    void reject() override
+    {
+        // Escape 键也应经过未保存检查
+        close();
+    }
+
+private:
+    bool saveChanges()
+    {
+        if (file_system_ == nullptr ||
+            file_node_ == nullptr)
+            return false;
+
+        // 把编辑器中的 Unicode 文本转换为 UTF-8
+        std::string newContent =
+            editor_->toPlainText().toStdString();
+
+        // 通过 FileSystem 修改内容，
+        // 自动更新大小和修改时间
+        if (!file_system_->set_content(
+                file_node_, newContent))
+        {
+            QMessageBox::warning(
+                this,
+                "保存失败",
+                "无法更新文件内容。"
+                );
+            return false;
+        }
+
+
+        // 保存到当前用户的数据文件。
+        // 只有真正提交成功，才标记编辑器为已保存。
+        if (!save_callback_ || !save_callback_())
+        {
+            QMessageBox::warning(
+                this,
+                "保存失败",
+                "文件内容已更新到当前程序内存，"
+                "但写入磁盘失败。\n"
+                "请检查保存路径和磁盘状态，然后重试保存。"
+                );
+
+            // 保留未保存标记，方便用户重新尝试
+            return false;
+        }
+
+        editor_->document()->setModified(false);
+        return true;
+
+    }
+
+private:
+    FileSystem* file_system_ = nullptr;
+    FileNode* file_node_ = nullptr;
+    std::function<bool()> save_callback_;
+    QPlainTextEdit* editor_ = nullptr;
+};
+
+
+
 MainWindow::MainWindow(QString username, QWidget *parent)
     : QMainWindow(parent)
     , ui(new Ui::MainWindow)
@@ -153,6 +391,7 @@ MainWindow::MainWindow(QString username, QWidget *parent)
 
     // 左侧目录树使用两列：名称 + 置顶图标
     ui->tree_dir->setColumnCount(2);
+
 
     // ===============================================
     // 搜索栏
@@ -198,7 +437,9 @@ MainWindow::MainWindow(QString username, QWidget *parent)
     rename_click_timer->setSingleShot(true);
     connect(rename_click_timer, &QTimer::timeout, this, [this]() {
         QListWidgetItem *item = last_clicked_item;
-        if (!recycle_mode && item != nullptr &&
+        if (!recycle_mode &&
+            !privacy_overview_mode &&
+            item != nullptr &&
             ui->list_files->currentItem() == item &&
             (item->flags() & Qt::ItemIsEditable)) {
             ui->list_files->editItem(item);
@@ -207,6 +448,7 @@ MainWindow::MainWindow(QString username, QWidget *parent)
         last_click_time = 0;
     });
 
+
     // ===============================================
     // 路径栏
     // ===============================================
@@ -214,13 +456,15 @@ MainWindow::MainWindow(QString username, QWidget *parent)
     connect(ui->lineEdit_path, &QLineEdit::returnPressed,
             this, [this]() {
 
-                // 回收站不是普通文件夹路径
-                if (recycle_mode) {
+                // 回收站和隐私总览不是普通文件夹路径
+                if (recycle_mode || privacy_overview_mode) {
                     QMessageBox::information(
                         this, "提示",
                         "请先从左侧目录树进入普通文件夹。"
                         );
-                    ui->lineEdit_path->setText("回收站");
+                    ui->lineEdit_path->setText(
+                        recycle_mode ? "回收站" : "隐私文件"
+                        );
                     return;
                 }
 
@@ -299,6 +543,23 @@ MainWindow::MainWindow(QString username, QWidget *parent)
                     ui->lineEdit_path->setText(
                         toDisplayPath(QString::fromStdString(currentPath))
                         );
+                    return;
+                }
+
+                // 导航前先检查隐私权限。
+                // 不允许先修改后退栈，再发现目标不可访问。
+                if (!can_access_node(targetNode))
+                {
+                    QMessageBox::warning(
+                        this,
+                        "访问受限",
+                        "目标文件夹受到隐私保护，请先验证密码。"
+                        );
+
+                    ui->lineEdit_path->setText(
+                        toDisplayPath(QString::fromStdString(currentPath))
+                        );
+
                     return;
                 }
 
@@ -401,8 +662,9 @@ MainWindow::MainWindow(QString username, QWidget *parent)
 
     connect(renameShortcut, &QShortcut::activated,
             this, [this]() {
-                if (!recycle_mode &&
-                    ui->list_files->hasFocus())
+        if (!recycle_mode &&
+            !privacy_overview_mode &&
+            ui->list_files->hasFocus())
                     on_btn_rename_clicked();
             });
 
@@ -414,8 +676,9 @@ MainWindow::MainWindow(QString username, QWidget *parent)
 
     connect(copyShortcut, &QShortcut::activated,
             this, [this]() {
-                if (!recycle_mode &&
-                    ui->list_files->hasFocus())
+        if (!recycle_mode &&
+            !privacy_overview_mode &&
+            ui->list_files->hasFocus())
                     on_btn_copy_clicked();
             });
 
@@ -427,8 +690,9 @@ MainWindow::MainWindow(QString username, QWidget *parent)
 
     connect(cutShortcut, &QShortcut::activated,
             this, [this]() {
-                if (!recycle_mode &&
-                    ui->list_files->hasFocus())
+        if (!recycle_mode &&
+            !privacy_overview_mode &&
+            ui->list_files->hasFocus())
                     on_btn_cut_clicked();
             });
 
@@ -440,8 +704,9 @@ MainWindow::MainWindow(QString username, QWidget *parent)
 
     connect(pasteShortcut, &QShortcut::activated,
             this, [this]() {
-                if (!recycle_mode &&
-                    ui->list_files->hasFocus())
+        if (!recycle_mode &&
+            !privacy_overview_mode &&
+            ui->list_files->hasFocus())
                     on_btn_paste_clicked();
             });
 
@@ -454,8 +719,9 @@ MainWindow::MainWindow(QString username, QWidget *parent)
 
     connect(deleteShortcut, &QShortcut::activated,
             this, [this]() {
-                if (!recycle_mode &&
-                    ui->list_files->hasFocus())
+        if (!recycle_mode &&
+            !privacy_overview_mode &&
+            ui->list_files->hasFocus())
                 {
                     // Ctrl+D 直接删除，不弹确认窗口
                     delete_selected_item(false);
@@ -468,10 +734,10 @@ MainWindow::MainWindow(QString username, QWidget *parent)
 
     undoShortcut->setContext(Qt::WidgetWithChildrenShortcut);
 
-    connect(undoShortcut, &QShortcut::activated,
-            this, [this]() {
-                if (!recycle_mode &&
-                    ui->list_files->hasFocus())
+    connect(undoShortcut, &QShortcut::activated,this, [this]() {
+        if (!recycle_mode &&
+            !privacy_overview_mode &&
+            ui->list_files->hasFocus())
                     on_btn_undo_clicked();
             });
 
@@ -487,6 +753,11 @@ MainWindow::MainWindow(QString username, QWidget *parent)
             &QListWidget::customContextMenuRequested,
             this, [this](const QPoint& pos)
             {
+                // 隐私总览目前只负责定位，
+                // 不直接提供剪切、删除等普通右键操作
+                if (privacy_overview_mode)
+                    return;
+
                 // 先取消可能正在等待的重命名
                 rename_click_timer->stop();
                 last_clicked_item = nullptr;
@@ -528,9 +799,9 @@ MainWindow::MainWindow(QString username, QWidget *parent)
 
                     privacyAction->setCheckable(true);
                     privacyAction->setChecked(show_privacy_mode);
-                    privacyAction->setEnabled(true); // 👈 解除封印
+                    privacyAction->setEnabled(true); // 解除封印
 
-                    // 👈 绑定槽函数
+                    // 绑定槽函数
                     connect(privacyAction, &QAction::triggered, this, &MainWindow::on_action_show_privacy_triggered);
                     menu.addSeparator();
 
@@ -656,45 +927,49 @@ MainWindow::MainWindow(QString username, QWidget *parent)
                     QAction* openAction =
                         menu.addAction("打开");
 
+
                     connect(openAction, &QAction::triggered,
                             this, [this, node]()
                             {
-                                if (!node->is_directory())
+                                // 1. 统一权限检查
+                                if (!can_access_node(node))
                                 {
-                                    QMessageBox::information(
-                                        this, "提示",
-                                        "当前尚不支持打开文件内容。");
+                                    QMessageBox::warning(
+                                        this,
+                                        "访问受限",
+                                        "请先通过“显示 → 隐私文件”验证权限。"
+                                        );
                                     return;
                                 }
 
-                                if (file_system->is_locked(node)) {
-                                    bool ok;
-                                    QString pass = QInputDialog::getText(this, "文件已锁定", "该文件夹已锁定，请输入隐私密码：", QLineEdit::Password, "", &ok);
-                                    if (!ok) return;
-
-                                    if (verify_privacy_password(pass)) {
-                                        has_privacy_access = true; // 密码正确，授予权限
-                                        refresh_file_list(); // 刷新一下让界面显示该文件
-                                    } else {
-                                        QMessageBox::warning(this, "错误", "隐私密码错误！");
-                                        return; // 密码错误，不执行打开操作
-                                    }
+                                // 2. 普通 TXT 文件：进入内置编辑器
+                                if (!node->is_directory())
+                                {
+                                    open_text_editor(node);
+                                    return;
                                 }
+
+                                // 3. 获取当前目录和目标目录路径
                                 std::string currentPath =
                                     file_system->get_path(
-                                        file_system->get_current_directory());
+                                        file_system->get_current_directory()
+                                        );
 
                                 std::string targetPath =
                                     file_system->get_path(node);
 
+                                // 4. 已经在目标目录，无需重复跳转
                                 if (currentPath == targetPath)
                                     return;
 
+                                // 5. 保存后退历史
                                 back_stack.push(currentPath);
 
+                                // 清空前进历史
                                 while (!forward_stack.empty())
                                     forward_stack.pop();
 
+                                // 6. 统一执行目录跳转
                                 navigate_to(targetPath);
                             });
 
@@ -781,6 +1056,64 @@ MainWindow::MainWindow(QString username, QWidget *parent)
             });
 
 
+}
+
+
+
+void MainWindow::open_text_editor(FileNode* node)
+{
+    if (node == nullptr)
+        return;
+
+    // 回收站不直接编辑文件内容
+    if (file_system->is_in_recycle_bin(node))
+    {
+        QMessageBox::information(
+            this,
+            "无法编辑",
+            "请先将文件从回收站恢复。"
+            );
+        return;
+    }
+
+    if (node->is_directory())
+    {
+        QMessageBox::information(
+            this,
+            "提示",
+            "文件夹不能使用 TXT 编辑器打开。"
+            );
+        return;
+    }
+
+    // 自身锁定和继承保护统一检查
+    if (!can_access_node(node))
+    {
+        QMessageBox::warning(
+            this,
+            "访问受限",
+            "该文件受到隐私保护，请先验证隐私密码。"
+            );
+        return;
+    }
+
+    // 编辑器关闭前不会返回，
+    // 避免同时修改底层节点
+    TxtEditorDialog dialog(
+        file_system,
+        node,
+        [this]() -> bool
+        {
+            return save_data();
+        },
+        this
+        );
+
+    dialog.exec();
+
+    // 文件大小和修改时间可能发生变化
+    refresh_file_list();
+    refresh_tree();
 }
 
 
@@ -978,9 +1311,45 @@ void MainWindow::show_node_properties(FileNode* node)
 
 MainWindow::~MainWindow()
 {
+    discard_privacy_key();
     delete ui;
     delete file_system; // 记得释放内存
 }
+
+
+
+bool MainWindow::is_privacy_protected(FileNode* node) const
+{
+    // 从当前节点一直检查到根目录
+    for (FileNode* p = node;
+         p != nullptr;
+         p = p->get_parent())
+    {
+        if (p->is_locked())
+            return true;
+    }
+
+    return false;
+}
+
+bool MainWindow::can_access_node(FileNode* node) const
+{
+    if (node == nullptr)
+        return false;
+
+    // 异常情况下即使节点锁标志消失，也不能把尚未解密的 E1 当成普通文本。
+    if (!node->get_sealed_content().empty() && crypto_session_key_.empty())
+        return false;
+
+    // 普通节点不需要授权
+    if (!is_privacy_protected(node))
+        return true;
+
+    // 受保护节点必须同时满足：
+    // 已验证隐私密码 + 处于显示隐私文件模式
+    return show_privacy_mode && has_privacy_access;
+}
+
 
 
 void MainWindow::refresh_file_list()
@@ -992,6 +1361,65 @@ void MainWindow::refresh_file_list()
     QSignalBlocker blocker(ui->list_files);
 
     ui->list_files->clear();
+
+
+    // ==================================================
+    // 隐私文件
+    // ==================================================
+    // 只显示主动上锁的节点，不重复列出继承保护的子节点
+    if (privacy_overview_mode)
+    {
+        if (!show_privacy_mode || !has_privacy_access)
+        {
+            privacy_overview_mode = false;
+            return;
+        }
+
+        file_system->traverse(
+            file_system->get_root(),
+            [this](FileNode* node)
+            {
+                if (node == nullptr ||
+                    node == file_system->get_root())
+                    return;
+
+                // 只有节点自身上锁才纳入总览
+                if (!node->is_locked())
+                    return;
+
+                // 显示完整路径，避免同名文件混淆
+                QString path = toDisplayPath(
+                    QString::fromStdString(
+                        file_system->get_path(node)
+                        )
+                    );
+
+                QListWidgetItem* item =
+                    new QListWidgetItem(path);
+
+                item->setData(
+                    Qt::UserRole,
+                    QVariant::fromValue(node)
+                    );
+
+                item->setIcon(makeFileNodeIcon(node));
+
+                // 总览中不允许直接行内重命名
+                item->setFlags(
+                    item->flags() & ~Qt::ItemIsEditable
+                    );
+
+                item->setToolTip(
+                    "隐私文件\n原始位置：" + path
+                    );
+
+                ui->list_files->addItem(item);
+            }
+            );
+
+        return;
+    }
+
 
     // ==================================================
     // 回收站
@@ -1046,11 +1474,13 @@ void MainWindow::refresh_file_list()
 
     while (child != nullptr)
     {
-        // 👈 【加这里】
-        if (file_system->is_locked(child) && !has_privacy_access) {
+
+        if (!can_access_node(child))
+        {
             child = child->get_next_sibling();
             continue;
         }
+
         if (child->is_pinned())
             addToListWidget(child);
 
@@ -1063,8 +1493,8 @@ void MainWindow::refresh_file_list()
 
     while (child != nullptr)
     {
-        // 👈 【加这里】
-        if (file_system->is_locked(child) && !has_privacy_access) {
+        if (!can_access_node(child))
+        {
             child = child->get_next_sibling();
             continue;
         }
@@ -1085,7 +1515,8 @@ void MainWindow::build_tree_item(FileNode* node, QTreeWidgetItem* parentItem) {
     while (child != nullptr) {
         // 左侧树只显示文件夹
         if (child->is_directory()) {
-            if (file_system->is_locked(child) && !has_privacy_access) {
+            if (!can_access_node(child))
+            {
                 child = child->get_next_sibling();
                 continue;
             }
@@ -1107,6 +1538,7 @@ void MainWindow::build_tree_item(FileNode* node, QTreeWidgetItem* parentItem) {
         child = child->get_next_sibling();
     }
 }
+
 
 
 void MainWindow::refresh_tree()
@@ -1138,9 +1570,33 @@ void MainWindow::refresh_tree()
 
 
     // ==================================================
-    // 第二部分：真正的置顶项目
-    // 按置顶先后顺序排列：
-    // 先置顶的在上，后置顶的在下
+    // 第二部分：隐私文件
+    // ==================================================
+    // 类型 2 表示特殊的隐私文件视图
+    QTreeWidgetItem* privacyItem =
+        new QTreeWidgetItem(ui->tree_dir);
+
+    privacyItem->setText(0, "隐私文件");
+
+    privacyItem->setIcon(
+        0,
+        QIcon(":/icons/icons/lock.svg")
+        );
+
+    privacyItem->setData(
+        0,
+        Qt::UserRole + 1,
+        2
+        );
+
+    privacyItem->setToolTip(
+        0,
+        "验证隐私密码后，集中查看所有主动上锁的文件和文件夹。"
+        );
+
+
+    // ==================================================
+    // 第三部分：置顶项目
     // ==================================================
     QList<FileNode*> pinnedNodes;
 
@@ -1153,7 +1609,7 @@ void MainWindow::refresh_tree()
 
             if (file_system->is_pinned(node))
             {
-                if (file_system->is_locked(node) && !has_privacy_access) {
+                if (!can_access_node(node)) {
                     return;
                 }
                 pinnedNodes.append(node);
@@ -1204,10 +1660,10 @@ void MainWindow::refresh_tree()
 
 
     // ==================================================
-    // 第三部分：最近访问
+    // 第四部分：最近访问
+    // ==================================================
     // history_list 内部仍然保存完整路径
     // 左侧只显示最后一级
-    // ==================================================
     for (const QString& path : std::as_const(history_list))
     {
         FileNode* node =
@@ -1224,7 +1680,7 @@ void MainWindow::refresh_tree()
         // 已经置顶的项目不在最近访问中重复显示
         if (file_system->is_pinned(node))
             continue;
-        if (file_system->is_locked(node) && !has_privacy_access)
+        if (!can_access_node(node))
             continue;
 
         QTreeWidgetItem* item =
@@ -1260,7 +1716,7 @@ void MainWindow::refresh_tree()
 
 
     // ==================================================
-    // 第四部分：真实目录树
+    // 第五部分：真实目录树
     // ==================================================
     QTreeWidgetItem* rootItem =
         new QTreeWidgetItem(ui->tree_dir);
@@ -1480,7 +1936,7 @@ void MainWindow::on_btn_new_file_clicked()
 
 void MainWindow::delete_selected_item(bool needConfirm)
 {
-    if (recycle_mode)
+    if (recycle_mode || privacy_overview_mode)
         return;
 
     QListWidgetItem* item = ui->list_files->currentItem();
@@ -1543,7 +1999,7 @@ void MainWindow::on_btn_delete_clicked()
 void MainWindow::on_btn_rename_clicked()
 {
 
-    if (recycle_mode)
+    if (recycle_mode || privacy_overview_mode)
         return;
 
     QListWidgetItem* item = ui->list_files->currentItem();
@@ -1552,6 +2008,19 @@ void MainWindow::on_btn_rename_clicked()
         QMessageBox::warning(
             this, "提示",
             "请先选择要重命名的文件或文件夹！");
+        return;
+    }
+
+    FileNode* node =
+        item->data(Qt::UserRole).value<FileNode*>();
+
+    if (node == nullptr || !can_access_node(node))
+    {
+        QMessageBox::warning(
+            this,
+            "重命名失败",
+            "文件不存在或当前没有访问权限。"
+            );
         return;
     }
 
@@ -1571,7 +2040,7 @@ void MainWindow::on_btn_rename_clicked()
 
 void MainWindow::on_list_files_itemChanged(QListWidgetItem *item)
 {
-    if (item == nullptr || recycle_mode)
+    if (item == nullptr || recycle_mode || privacy_overview_mode)
         return;
 
     FileNode* node =
@@ -1586,6 +2055,24 @@ void MainWindow::on_list_files_itemChanged(QListWidgetItem *item)
 
     if (newName == oldName)
         return;
+
+
+    // 提交新文件名之前，再检查一次当前隐私权限。
+    if (!can_access_node(node))
+    {
+        QSignalBlocker blocker(ui->list_files);
+
+        // 恢复原名称，避免界面显示与底层不一致
+        item->setText(oldName);
+
+        QMessageBox::warning(
+            this,
+            "重命名失败",
+            "当前文件受到隐私保护，请先验证隐私密码。"
+            );
+
+        return;
+    }
 
     // 重命名失败：恢复原名称并退出编辑
     auto restoreName = [this, item, oldName](
@@ -1664,7 +2151,10 @@ void MainWindow::on_list_files_itemPressed(QListWidgetItem *item)
 {
     // itemPressed 也会在双击的第一下触发，不能在这里直接 editItem。
     rename_click_timer->stop();
-    if (item == nullptr || recycle_mode) {
+    if (item == nullptr ||
+        recycle_mode ||
+        privacy_overview_mode)
+    {
         last_clicked_item = nullptr;
         last_click_time = 0;
         return;
@@ -1685,6 +2175,9 @@ void MainWindow::on_list_files_itemPressed(QListWidgetItem *item)
 
 void MainWindow::on_btn_copy_clicked()
 {
+    if (recycle_mode || privacy_overview_mode)
+        return;
+
     QListWidgetItem *item = ui->list_files->currentItem();
 
     if (item == nullptr)
@@ -1695,18 +2188,17 @@ void MainWindow::on_btn_copy_clicked()
 
     if (node == nullptr)
         return;
-    if (file_system->is_locked(node) ) {
-        bool ok;
-        QString pass = QInputDialog::getText(this, "文件已锁定", "该文件已锁定，请输入隐私密码解锁：", QLineEdit::Password, "", &ok);
-        if (!ok) return;
-        if (verify_privacy_password(pass)) {
-            has_privacy_access = true; // 通过验证，临时授权
-            refresh_file_list();
-        } else {
-            QMessageBox::warning(this, "错误", "隐私密码错误！");
-            return;
-        }
+
+    if (!can_access_node(node))
+    {
+        QMessageBox::warning(
+            this,
+            "访问受限",
+            "请先通过“显示 → 隐私文件”验证权限。"
+            );
+        return;
     }
+
     clipboard_node = node;
     clipboard_mode = ClipboardMode::Copy;
 }
@@ -1714,6 +2206,9 @@ void MainWindow::on_btn_copy_clicked()
 
 void MainWindow::on_btn_cut_clicked()
 {
+    if (recycle_mode || privacy_overview_mode)
+        return;
+
     QListWidgetItem *item = ui->list_files->currentItem();
 
     if (item == nullptr)
@@ -1724,26 +2219,27 @@ void MainWindow::on_btn_cut_clicked()
 
     if (node == nullptr)
         return;
-    if (file_system->is_locked(node) ) {
-        bool ok;
-        QString pass = QInputDialog::getText(this, "文件已锁定", "该文件已锁定，请输入隐私密码解锁：", QLineEdit::Password, "", &ok);
-        if (!ok) return;
-        if (verify_privacy_password(pass)) {
-            has_privacy_access = true; // 通过验证，临时授权
-            refresh_file_list();
-        } else {
-            QMessageBox::warning(this, "错误", "隐私密码错误！");
-            return;
-        }
+
+    if (!can_access_node(node))
+    {
+        QMessageBox::warning(
+            this,
+            "访问受限",
+            "请先通过“显示 → 隐私文件”验证权限。"
+            );
+        return;
     }
+
     clipboard_node = node;
     clipboard_mode = ClipboardMode::Cut;
 }
 
 
-
 void MainWindow::on_btn_paste_clicked()
 {
+    if (recycle_mode || privacy_overview_mode)
+        return;
+
     if (clipboard_node == nullptr ||
         clipboard_mode == ClipboardMode::None)
         return;
@@ -1751,29 +2247,76 @@ void MainWindow::on_btn_paste_clicked()
     FileNode* source = clipboard_node;
     FileNode* target = file_system->get_current_directory();
 
-    const bool isCopy = (clipboard_mode == ClipboardMode::Copy);
+    const bool isCopy =
+        (clipboard_mode == ClipboardMode::Copy);
 
-    // 1. 检查剪贴板源节点是否仍在活动文件树中
+    // 1. 先检查源节点是否仍存在。
     bool sourceExists = false;
 
     file_system->traverse(
         file_system->get_root(),
-        [&](FileNode* node) {
+        [&](FileNode* node)
+        {
             if (node == source)
                 sourceExists = true;
-        });
+        }
+        );
 
     if (!sourceExists || source == file_system->get_root())
     {
         QMessageBox::warning(
-            this, "粘贴失败",
-            "源文件或文件夹已失效。");
+            this,
+            "粘贴失败",
+            "源文件或文件夹已失效。"
+            );
 
         clipboard_node = nullptr;
         clipboard_mode = ClipboardMode::None;
         return;
     }
-    // 2. 防止在同一目录中覆盖自己
+
+    // 2. 确认节点有效后，才检查访问权限。
+    if (!can_access_node(source) ||
+        !can_access_node(target))
+    {
+        QMessageBox::warning(
+            this,
+            "粘贴失败",
+            "源文件或目标目录没有访问权限。"
+            );
+        return;
+    }
+
+    // 复制整个文件夹时，必须检查其所有子节点。
+    // 不能因为顶层文件夹未上锁，就跳过内部的隐私文件。
+    if (isCopy)
+    {
+        bool containsInaccessibleNode = false;
+
+        file_system->traverse(
+            source,
+            [this, &containsInaccessibleNode](FileNode* node)
+            {
+                if (!can_access_node(node))
+                {
+                    containsInaccessibleNode = true;
+                }
+            }
+            );
+
+        if (containsInaccessibleNode)
+        {
+            QMessageBox::warning(
+                this,
+                "复制失败",
+                "源文件夹包含未授权的隐私文件。\n"
+                "请先验证隐私密码并显示隐私文件。"
+                );
+            return;
+        }
+    }
+
+    // 3. 防止在同一目录中覆盖自己
     if (source->get_parent() == target)
     {
         QMessageBox::warning(
@@ -1782,7 +2325,7 @@ void MainWindow::on_btn_paste_clicked()
         return;
     }
 
-    // 3. 防止将文件夹复制/移动到自身或子目录
+    // 4. 防止将文件夹复制/移动到自身或子目录
     for (FileNode* p = target;
          p != nullptr;
          p = p->get_parent())
@@ -1804,17 +2347,45 @@ void MainWindow::on_btn_paste_clicked()
 
     std::function<bool(FileNode*, FileNode*)> checkConflicts;
 
+
     checkConflicts = [&](FileNode* src,
                          FileNode* destParent) -> bool
     {
-        FileNode* existing = file_system->find_child(
-            destParent, src->get_name());
+        // 递归合并可能深入源文件夹内部。
+        // 与直接移动整个文件夹不同，展开合并时必须有访问权限。
+        if (!can_access_node(src) ||
+            !can_access_node(destParent))
+        {
+            QMessageBox::warning(
+                this,
+                "粘贴失败",
+                "递归合并涉及未授权的隐私目录或文件。"
+                );
+            return false;
+        }
 
-        // 无冲突：整个子树都可以直接复制/移动
+        FileNode* existing = file_system->find_child(
+            destParent, src->get_name()
+            );
+
+        // 没有同名项时，后续沿用原有复制/移动逻辑。
         if (existing == nullptr)
             return true;
 
+        // 已存在同名项：不能未经授权直接替换或合并。
+        if (!can_access_node(existing))
+        {
+            QMessageBox::warning(
+                this,
+                "粘贴失败",
+                "目标位置存在受隐私保护的同名项目。\n"
+                "请先验证隐私密码，不能直接覆盖或合并。"
+                );
+            return false;
+        }
+
         hasConflict = true;
+
 
         QString name = QString::fromStdString(
             src->get_name());
@@ -2029,45 +2600,91 @@ void MainWindow::on_btn_paste_clicked()
 }
 
 
-
 void MainWindow::on_btn_back_clicked()
 {
-    if (back_stack.empty()) {
-        ui->statusbar->showMessage("已经在最开始的位置了", 2000);
+    if (back_stack.empty())
+    {
+        ui->statusbar->showMessage(
+            "已经没有可以后退的记录了。", 2000);
         return;
     }
-    // 将当前路径压入前进栈
-    forward_stack.push(
+
+    const std::string targetPath = back_stack.top();
+
+    FileNode* target =
+        file_system->find_by_path(targetPath);
+
+    // 预先检查，不允许失败时破坏历史栈
+    if (target == nullptr ||
+        !target->is_directory() ||
+        !can_access_node(target))
+    {
+        QMessageBox::warning(
+            this,
+            "无法后退",
+            "历史目录不存在或当前没有访问权限。"
+            );
+        return;
+    }
+
+    const std::string currentPath =
         file_system->get_path(
             file_system->get_current_directory()
-            )
-    );
-    // 取出后退栈的历史路径
-    std::string targetPath = back_stack.top();
+            );
+
+    if (!file_system->change_directory_by_path(targetPath))
+        return;
+
     back_stack.pop();
-    // 跳转
+    forward_stack.push(currentPath);
+
+    // 统一更新普通目录界面
     navigate_to(targetPath);
 }
+
+
 
 
 void MainWindow::on_btn_forward_clicked()
 {
-    if (forward_stack.empty()) {
-        ui->statusbar->showMessage("没有可以前进的历史", 2000);
+    if (forward_stack.empty())
+    {
+        ui->statusbar->showMessage(
+            "没有可以前进的记录。", 2000);
         return;
     }
-    // 将当前路径压入后退栈
-    back_stack.push(
+
+    const std::string targetPath = forward_stack.top();
+
+    FileNode* target =
+        file_system->find_by_path(targetPath);
+
+    if (target == nullptr ||
+        !target->is_directory() ||
+        !can_access_node(target))
+    {
+        QMessageBox::warning(
+            this,
+            "无法前进",
+            "历史目录不存在或当前没有访问权限。"
+            );
+        return;
+    }
+
+    const std::string currentPath =
         file_system->get_path(
             file_system->get_current_directory()
-            )
-    );
-    // 取出前进栈的历史路径
-    std::string targetPath = forward_stack.top();
+            );
+
+    if (!file_system->change_directory_by_path(targetPath))
+        return;
+
     forward_stack.pop();
-    // 跳转
+    back_stack.push(currentPath);
+
     navigate_to(targetPath);
 }
+
 
 
 void MainWindow::on_btn_up_clicked()
@@ -2118,17 +2735,16 @@ void MainWindow::on_btn_search_clicked()
         file_system->get_current_directory(),
         [&results, &keyword,this](FileNode* node)
         {
-            // 👈 加这里：锁定且无权限，跳过不搜索
-            if (file_system->is_locked(node) && !has_privacy_access) return;
+
+            if (!can_access_node(node))
+                return;
+
             QString name =
                 QString::fromStdString(
                     node->get_name()
                     );
 
-            if (name.contains(
-                    keyword,
-                    Qt::CaseInsensitive))
-            {
+            if (name.contains(keyword,Qt::CaseInsensitive)){
                 results.append(node);
             }
         }
@@ -2159,6 +2775,33 @@ void MainWindow::navigate_to(
     bool refreshTree,
     bool recordHistory)
 {
+    FileNode* targetNode = file_system->find_by_path(path);
+
+    if (targetNode == nullptr ||
+        !targetNode->is_directory() ||
+        !can_access_node(targetNode))
+    {
+        QMessageBox::warning(
+            this,
+            "无法访问",
+            "目标目录不存在或当前没有访问权限。"
+            );
+
+        FileNode* current =
+            file_system->get_current_directory();
+
+        if (current != nullptr)
+        {
+            ui->lineEdit_path->setText(
+                toDisplayPath(QString::fromStdString(
+                    file_system->get_path(current)
+                    ))
+                );
+        }
+
+        return;
+    }
+
     bool success =
         file_system->change_directory_by_path(path);
 
@@ -2181,8 +2824,27 @@ void MainWindow::navigate_to(
         return;
     }
 
+
     FileNode* current =
         file_system->get_current_directory();
+
+    // 已经成功进入普通目录，统一退出特殊视图
+    recycle_mode = false;
+    privacy_overview_mode = false;
+
+    // 显示普通文件操作
+    ui->btn_new->show();
+    ui->btn_cut->show();
+    ui->btn_copy->show();
+    ui->btn_paste->show();
+    ui->btn_rename->show();
+    ui->btn_delete->show();
+
+    // 隐藏回收站操作
+    ui->btn_restore->hide();
+    ui->btn_permanent_delete->hide();
+    ui->btn_clear_recycle->hide();
+
 
     const std::string currentPath =
         file_system->get_path(current);
@@ -2244,32 +2906,72 @@ void MainWindow::on_list_files_itemDoubleClicked(
     if (targetNode == nullptr)
         return;
 
-    if (file_system->is_locked(targetNode) ) {
-        bool ok;
-        QString pass = QInputDialog::getText(this, "文件已锁定", "请输入隐私密码：", QLineEdit::Password, "", &ok);
-        if (!ok) return;
-        if (verify_privacy_password(pass)) {
-            has_privacy_access = true; // 通过验证
-            refresh_file_list();
-        } else {
-            QMessageBox::warning(this, "错误", "密码错误！");
-            return;
-        }
-    }
-    if (!targetNode->is_directory())
+    // 回收站里的节点不属于活动文件树，不能把它当普通目录进入
+    if (recycle_mode)
+        return;
+
+    // 从隐私文件总览定位到原始文件夹
+    if (privacy_overview_mode)
     {
-        QMessageBox::information(
+        if (!can_access_node(targetNode))
+            return;
+
+        FileNode* destination = targetNode;
+
+        // 文件不能作为目录进入，定位到所在文件夹
+        if (!targetNode->is_directory())
+            destination = targetNode->get_parent();
+
+        if (destination == nullptr)
+            return;
+
+        std::string targetPath =
+            file_system->get_path(destination);
+
+        std::string currentPath =
+            file_system->get_path(
+                file_system->get_current_directory()
+                );
+
+        // 返回普通目录操作状态
+        privacy_overview_mode = false;
+        recycle_mode = false;
+
+        ui->btn_new->show();
+        ui->btn_cut->show();
+        ui->btn_copy->show();
+        ui->btn_paste->show();
+        ui->btn_rename->show();
+        ui->btn_delete->show();
+
+        if (targetPath != currentPath)
+        {
+            back_stack.push(currentPath);
+
+            while (!forward_stack.empty())
+                forward_stack.pop();
+        }
+
+        navigate_to(targetPath);
+
+        return;
+    }
+
+    if (!can_access_node(targetNode))
+    {
+        QMessageBox::warning(
             this,
-            "提示",
-            "这是一个文件，双击不能进入。"
+            "访问受限",
+            "请先显示隐私文件并验证密码。"
             );
         return;
     }
 
-    // 回收站里的节点不属于活动文件树，
-    // 不能把它当普通目录进入
-    if (recycle_mode)
+    if (!targetNode->is_directory())
+    {
+        open_text_editor(targetNode);
         return;
+    }
 
     FileNode* current =
         file_system->get_current_directory();
@@ -2310,17 +3012,109 @@ void MainWindow::on_tree_dir_itemClicked(
     if (item == nullptr)
         return;
 
-
-    // ==================================================
-    // 回收站
-    // ==================================================
-
     int itemType =
         item->data(
                 0,
                 Qt::UserRole + 1
                 ).toInt();
 
+
+    // ==================================================
+    // 隐私文件
+    // ==================================================
+    if (itemType == 2)
+    {
+        // 尚未获得隐私权限时，验证密码
+        if (!show_privacy_mode || !has_privacy_access)
+        {
+            bool ok = false;
+
+            QString password = QInputDialog::getText(
+                this,
+                "隐私文件",
+                "请输入隐私密码：",
+                QLineEdit::Password,
+                "",
+                &ok
+                );
+
+            if (!ok)
+                return;
+
+            if (!verify_privacy_password(password))
+            {
+                QMessageBox::warning(
+                    this,
+                    "验证失败",
+                    "隐私密码错误！"
+                    );
+                return;
+            }
+
+            if (!unlock_encrypted_content(password))
+                return;
+
+            show_privacy_mode = true;
+            has_privacy_access = true;
+        }
+
+        privacy_overview_mode = true;
+        recycle_mode = false;
+
+        // 总览暂时作为只读导航视图，
+        // 避免普通文件操作按钮误操作
+        ui->btn_new->hide();
+        ui->btn_cut->hide();
+        ui->btn_copy->hide();
+        ui->btn_paste->hide();
+        ui->btn_rename->hide();
+        ui->btn_delete->hide();
+
+        ui->btn_restore->hide();
+        ui->btn_permanent_delete->hide();
+        ui->btn_clear_recycle->hide();
+
+        refresh_file_list();
+
+        ui->lineEdit_path->setText("隐私文件");
+        ui->statusbar->showMessage(
+            "已进入隐私文件总览。",
+            3000
+            );
+
+        return;
+    }
+
+
+    // 普通目录节点先验证权限。
+    // 不能在确认可访问之前退出回收站或隐私总览。
+    if (itemType != 1 && itemType != 2)
+    {
+        FileNode* candidate =
+            item->data(0, Qt::UserRole).value<FileNode*>();
+
+        if (candidate == nullptr ||
+            !candidate->is_directory() ||
+            !can_access_node(candidate))
+        {
+            QMessageBox::warning(
+                this,
+                "无法访问",
+                "目标目录不存在或当前没有访问权限。"
+                );
+
+            return;
+        }
+    }
+
+
+    // 点击其他目录项时，退出隐私总览
+    privacy_overview_mode = false;
+
+
+    // ==================================================
+    // 回收站
+    // ==================================================
     if (itemType == 1)
     {
         recycle_mode = true;
@@ -2417,22 +3211,40 @@ void MainWindow::on_btn_refresh_clicked()
 }
 
 
-void MainWindow::save_node_recursive(FileNode* node, std::ofstream& out) {
+void MainWindow::save_node_recursive(FileNode* node, std::ostream& out) {
     if (node == nullptr) return;
 
     std::string path = file_system->get_path(node);
 
-    // 👇 【新增：判断是否需要加密内容】
-    std::string contentToSave = "";
-    if (!node->is_directory()) {
-        if (node->is_locked()) {
-            // 如果文件被锁定，保存加密后的内容
-            contentToSave = encryptContent(node->get_content());
-        } else {
-            // 没锁，按原样保存
-            contentToSave = node->get_content();
+    std::string contentToSave;
+    std::string contentEncoding = "P1";
+
+    if (!node->is_directory())
+    {
+        // 自身上锁或祖先文件夹上锁，都需要保护
+        if (is_privacy_protected(node))
+        {
+            if (!node->get_sealed_content().empty())
+            {
+                contentEncoding = "E1";
+                contentToSave = node->get_sealed_content();
+            }
+            else
+            {
+                // 仅为还未输入密码的旧 X1 存档保留原样兼容。
+                contentEncoding = "X1";
+                contentToSave = encryptContent(node->get_content());
+            }
+        }
+        else
+        {
+            contentEncoding = "P1";
+            contentToSave = encodePlainContent(
+                node->get_content()
+                );
         }
     }
+
     // 写入 8 个字段
     out << (node->is_directory() ? "D" : "F") << "|"
         << path << "|"
@@ -2442,8 +3254,9 @@ void MainWindow::save_node_recursive(FileNode* node, std::ofstream& out) {
         << node->get_pin_order() << "|"
         << node->get_size() << "|"
        //<< (node->is_directory() ? "" : node->get_content()) << "|"
-         << contentToSave << "|"  // 👈 替换原来的 content
-        << (node->is_locked() ? "1" : "0") << "\n";
+        << contentToSave << "|"
+        << (node->is_locked() ? "1" : "0") << "|"
+        << contentEncoding << "|\n";
 
     // 递归遍历子节点
     FileNode* child = node->get_first_child();
@@ -2454,20 +3267,36 @@ void MainWindow::save_node_recursive(FileNode* node, std::ofstream& out) {
 }
 
 
-void MainWindow::save_data()
+bool MainWindow::save_data()
 {
-    QString filename = "data_" + current_user + ".txt";
-    std::ofstream out(filename.toStdString());
-
-    if (!out.is_open())
+    // 存档缺损时禁止自动把“不完整的内存树”写回原始文件。
+    if (data_load_blocked_)
     {
-        QMessageBox::warning(
-            this,
-            "错误",
-            "无法创建保存文件！"
-            );
-        return;
+        QMessageBox::critical(
+            this, "禁止覆盖异常存档",
+            "上次载入存档时发现错误，因此自动保存已被禁止。\n"
+            "原存档仍在磁盘中，请先备份并修复。\n\n" +
+            data_load_error_);
+        return false;
     }
+
+    // 密文更新成功后才开始生成磁盘存档；失败不写原文件。
+    if (!prepare_encrypted_content_for_save())
+        return false;
+
+    const QString filename =
+        "data_" + current_user + ".txt";
+
+    // 第一步：先完整生成存档内容
+    // 此时不打开、不修改原始 TXT 文件
+    std::ostringstream out;
+
+    // 新版存档标记：存在该标记时必须验证结尾 CHK1。
+    out << "FMHDR|1|\n";
+    // 盐公开存储，真正密钥不落盘。原有存档不强制包含 KDF1。
+    if (!crypto_salt_.empty())
+        out << "KDF1|" << encodePlainContent(crypto_salt_)
+            << "|" << crypto_iterations_ << "|\n";
 
     // 保存普通文件树
     save_node_recursive(
@@ -2483,6 +3312,33 @@ void MainWindow::save_data()
             std::function<void(FileNode*, int)> writeRecycle =
                 [&](FileNode* node, int depth)
             {
+                    std::string contentToSave;
+                    std::string contentEncoding = "P1";
+
+                    if (!node->is_directory())
+                    {
+                        if (file_system->is_recycle_privacy_protected(node))
+                        {
+                            if (!node->get_sealed_content().empty())
+                            {
+                                contentEncoding = "E1";
+                                contentToSave = node->get_sealed_content();
+                            }
+                            else
+                            {
+                                contentEncoding = "X1"; // 旧版未迁移记录
+                                contentToSave = encryptContent(node->get_content());
+                            }
+                        }
+                        else
+                        {
+                            contentEncoding = "P1";
+                            contentToSave = encodePlainContent(
+                                node->get_content()
+                                );
+                        }
+                    }
+
                 if (depth == 0)
                     out << "R|";
                 else
@@ -2496,8 +3352,12 @@ void MainWindow::save_data()
                     << (node->is_pinned() ? "1" : "0") << "|"
                     << node->get_pin_order() << "|"
                     << node->get_size() << "|"
-                    << (node->is_directory() ? "" : node->get_content()) << "|"
-                    << (node->is_locked() ? "1" : "0") << "\n";
+                    << contentToSave << "|"
+                    << (node->is_locked() ? "1" : "0") << "|"
+                    << ((depth == 0 &&
+                         file_system->get_recycle_inherited_privacy(node))
+                            ? "1" : "0") << "|"
+                    << contentEncoding << "|\n";
 
                 for (FileNode* child = node->get_first_child();
                      child != nullptr; child = child->get_next_sibling())
@@ -2519,342 +3379,594 @@ void MainWindow::save_data()
         << history_replace_index
         << "\n";
 
-    out.close();
+
+    // 检查内存序列化是否成功
+    if (!out.good())
+    {
+        QMessageBox::critical(
+            this,
+            "保存失败",
+            "生成存档内容失败，原数据文件未被修改。"
+            );
+        return false;
+    }
+
+    // 取出完整的存档字节
+    std::string serialized = out.str();
+
+    // 校验码只用于检测数据意外损坏（不是防恶意篡改的 MAC）。
+    // 对校验行前的字节逐字节计算 SHA-256，旧版无校验码存档仍可读取。
+    const QByteArray body(serialized.data(),
+                          static_cast<qsizetype>(serialized.size()));
+    const QByteArray digest = QCryptographicHash::hash(
+        body, QCryptographicHash::Sha256).toHex();
+    serialized += "CHK1|" + digest.toStdString() + "|\n";
+
+    QSaveFile file(filename);
+
+    // 禁止在无法使用原子替换时退化为直接写原文件
+    file.setDirectWriteFallback(false);
+
+    // 第二步：打开安全保存文件
+    if (!file.open(QIODevice::WriteOnly))
+    {
+        QMessageBox::critical(
+            this,
+            "保存失败",
+            "无法打开安全存档文件：\n" +
+                file.errorString()
+            );
+        return false;
+    }
+
+    // 第三步：写入完整的存档
+    const qint64 expected =
+        static_cast<qint64>(serialized.size());
+
+    const qint64 written = file.write(
+        serialized.data(),
+        expected
+        );
+
+    if (written != expected)
+    {
+        const QString reason = file.errorString();
+
+        file.cancelWriting();
+
+        QMessageBox::critical(
+            this,
+            "保存失败",
+            "存档数据写入不完整。\n" + reason +
+                "\n原数据文件未被本次保存替换。"
+            );
+        return false;
+    }
+
+    // 第四步：提交，成功后才替换原存档
+    if (!file.commit())
+    {
+        QMessageBox::critical(
+            this,
+            "保存失败",
+            "安全提交存档失败：\n" +
+                file.errorString() +
+                "\n请检查磁盘空间及文件权限。"
+            );
+        return false;
+    }
 
     ui->statusbar->showMessage(
         "数据保存成功！",
         2000
         );
+
+    return true;
+
 }
 
 
 void MainWindow::load_data()
 {
-    QString filename = "data_" + current_user + ".txt";
-    std::ifstream in(filename.toStdString());
+    const QString filename = "data_" + current_user + ".txt";
 
-    // 第一次运行时没有 data.txt，直接返回
-    if (!in.is_open())
+    auto loadingError = [this, &filename](const QString& reason)
+    {
+        data_load_blocked_ = true;
+        data_load_error_ = reason;
+        QMessageBox::critical(
+            this,
+            "存档加载失败，已启用保护",
+            "检测到存档不完整或格式错误：\n" + reason +
+            "\n\n原存档：" + filename +
+            "\n程序不会自动覆盖它。请先复制备份，修复后再重新打开程序。"
+        );
+    };
+
+    // 首次运行确实没有存档，允许初始化空文件系统。
+    // 已存在却打不开的文件不能误判为“首次运行”。
+    if (!QFileInfo::exists(filename))
         return;
 
-    // 防止重复调用 load_data() 时历史记录重复
-    history_list.clear();
-
-    std::string line;
-    std::vector<FileNode*> recycleParents; // 索引为 RC 的深度
-
-    while (std::getline(in, line))
+    QFile archive(filename);
+    if (!archive.open(QIODevice::ReadOnly))
     {
-        if (line.empty())
-            continue;
+        loadingError("无法读取已有存档：" + archive.errorString());
+        return;
+    }
 
-        std::stringstream ss(line);
+    const QByteArray bytes = archive.readAll();
+    const auto readError = archive.error();
+    const QString readErrorMessage = archive.errorString();
+    archive.close();
 
-        std::string type;
-        std::getline(ss, type, '|');
+    if (readError != QFileDevice::NoError)
+    {
+        loadingError("存档读取中断：" + readErrorMessage);
+        return;
+    }
+    if (bytes.isEmpty())
+    {
+        loadingError("存档文件为空，无法确认是否丢失了数据。");
+        return;
+    }
 
+    // 逐行切分原始字节，保留每行在文件中的偏移，以验证校验码。
+    std::vector<QByteArray> lines;
+    std::vector<qsizetype> offsets;
+    qsizetype pos = 0;
+    while (pos < bytes.size())
+    {
+        const qsizetype newline = bytes.indexOf('\n', pos);
+        const qsizetype end = (newline < 0 ? bytes.size() : newline);
+        QByteArray line = bytes.mid(pos, end - pos);
+        if (line.endsWith('\r'))
+            line.chop(1);
+        lines.push_back(line);
+        offsets.push_back(pos);
+        pos = (newline < 0 ? bytes.size() : newline + 1);
+    }
 
-        // =======================================================
-        // 最近访问记录
-        // 格式：H|完整路径
-        // =======================================================
+    if (lines.empty())
+    {
+        loadingError("没有任何可解析的存档记录。");
+        return;
+    }
+
+    // 新版存档末尾有 CHK1|<64位十六进制SHA256>| 校验行。
+    // 旧存档没有 CHK1 时仍接受，但会做完整结构校验。
+    bool hasChecksum = false;
+    if (lines.back().startsWith("CHK1|"))
+    {
+        hasChecksum = true;
+        const QByteArray checksumRow = lines.back();
+        if (!checksumRow.endsWith('|') ||
+            checksumRow.size() != 5 + 64 + 1 ||
+            !bytes.endsWith('\n'))
+        {
+            loadingError("存档校验行格式错误或文件尾部被截断。");
+            return;
+        }
+        const QByteArray expected = checksumRow.mid(5, 64);
+        const QByteArray computed = QCryptographicHash::hash(
+            bytes.left(offsets.back()), QCryptographicHash::Sha256).toHex();
+        if (expected != computed)
+        {
+            loadingError("SHA-256 校验失败：存档可能已损坏或被修改。");
+            return;
+        }
+        lines.pop_back();
+    }
+
+    const bool hasNewHeader = !lines.empty() && lines.front() == "FMHDR|1|";
+    if (hasNewHeader)
+    {
+        if (!hasChecksum)
+        {
+            loadingError("新版存档缺少 CHK1 校验行，可能被截断。");
+            return;
+        }
+        lines.erase(lines.begin());
+    }
+    // KDF1 必须紧跟 FMHDR；旧存档可不带 KDF1。
+    std::string stagedCryptoSalt;
+    int stagedCryptoIterations = PrivacyCrypto::kIterations;
+    if (!lines.empty() && lines.front().startsWith("KDF1|"))
+    {
+        const QList<QByteArray> kdf = lines.front().split('|');
+        std::string decodedSalt;
+        bool roundsOk = false;
+        const int rounds = (kdf.size() == 4)
+            ? kdf[2].toInt(&roundsOk) : 0;
+        if (kdf.size() != 4 || !kdf[3].isEmpty() || !roundsOk ||
+            rounds < 100000 || rounds > 10000000 ||
+            !decodeBase64Content(kdf[1].toStdString(), decodedSalt) ||
+            decodedSalt.size() != PrivacyCrypto::kSaltSize)
+        {
+            loadingError("KDF1 密钥派生参数损坏。请恢复备份。");
+            return;
+        }
+        stagedCryptoSalt = std::move(decodedSalt);
+        stagedCryptoIterations = rounds;
+        lines.erase(lines.begin());
+    }
+    if (lines.empty())
+    {
+        loadingError("存档中没有文件系统数据。");
+        return;
+    }
+
+    // 只在临时 FileSystem 里恢复节点。任何一行出错时，原有
+    // file_system、历史记录均保持原样，且阻止保存覆盖源文件。
+    std::unique_ptr<FileSystem> staging(new FileSystem());
+    QStringList stagedHistory;
+    int stagedHistoryIndex = 0;
+    std::vector<FileNode*> recycleParents;
+    bool rootSeen = false;
+    bool indexSeen = false;
+    bool damaged = false;
+    QString reason;
+
+    enum class LoadPhase { Active, Recycle, History };
+    LoadPhase phase = LoadPhase::Active;
+
+    const auto parseNumber = [](const std::string& s, long long& result) -> bool
+    {
+        if (s.empty()) return false;
+        try {
+            std::size_t count = 0;
+            result = std::stoll(s, &count, 10);
+            return count == s.size();
+        } catch (...) {
+            return false;
+        }
+    };
+
+    const auto validFlag = [](const std::string& s) -> bool
+    {
+        return s == "0" || s == "1";
+    };
+
+    const auto splitFields = [](const QByteArray& row)
+    {
+        std::vector<std::string> fields;
+        const std::string s = row.toStdString();
+        std::size_t start = 0;
+        while (true) {
+            const std::size_t sep = s.find('|', start);
+            if (sep == std::string::npos) {
+                fields.push_back(s.substr(start));
+                break;
+            }
+            fields.push_back(s.substr(start, sep - start));
+            start = sep + 1;
+        }
+        // D/F/R/RC 记录以竖线结尾；仅去除该格式终止符。
+        if (!s.empty() && s.back() == '|' && !fields.empty())
+            fields.pop_back();
+        return fields;
+    };
+
+    for (std::size_t i = 0; i < lines.size(); ++i)
+    {
+        const auto f = splitFields(lines[i]);
+        const QString location = QString("第 %1 行：").arg(i + 1);
+        auto fail = [&](const QString& message) {
+            damaged = true;
+            reason = location + message;
+        };
+
+        if (f.empty() || f[0].empty()) {
+            fail("空白或不完整的存档记录。");
+            break;
+        }
+        const std::string& type = f[0];
+        if (indexSeen) {
+            fail("HIDX 必须是最后一条普通记录。");
+            break;
+        }
+
         if (type == "H")
         {
-            std::string historyPath;
-
-            // 路径本身不使用 '|'，
-            // 所以直接读取这一行剩余内容
-            std::getline(ss, historyPath);
-
-            if (!historyPath.empty())
+            phase = LoadPhase::History;
+            if (f.size() != 2 || f[1].empty() || f[1][0] != '/' ||
+                stagedHistory.size() >= 3)
             {
-                history_list.append(
-                    QString::fromStdString(historyPath)
-                    );
+                fail("访问历史记录格式错误。");
+                break;
             }
-
+            stagedHistory.append(QString::fromStdString(f[1]));
             continue;
         }
 
         if (type == "HIDX")
         {
-            std::string indexStr;
-            std::getline(ss, indexStr);
-
-            try
+            phase = LoadPhase::History;
+            long long value = -1;
+            if (f.size() != 2 || !parseNumber(f[1], value) ||
+                value < 0 || value > 2)
             {
-                history_replace_index =
-                    std::stoi(indexStr);
-
-                // 防止 data.txt 被改坏
-                if (history_replace_index < 0 ||
-                    history_replace_index >= 3)
-                {
-                    history_replace_index = 0;
-                }
+                fail("历史替换槽位 HIDX 格式错误。");
+                break;
             }
-            catch (...)
-            {
-                history_replace_index = 0;
-            }
-
+            stagedHistoryIndex = static_cast<int>(value);
+            indexSeen = true;
             continue;
         }
 
-        // =======================================================
-        // 回收站数据
-        // 格式：
-        // R|D或F|原路径|名称|创建时间|修改时间
-        //  |置顶|pin_order|大小|内容
-        // =======================================================
         if (type == "R" || type == "RC")
         {
-            int recycleDepth = 0;
-            if (type == "RC") {
-                std::string depthStr;
-                std::getline(ss, depthStr, '|');
-                try { recycleDepth = std::stoi(depthStr); }
-                catch (...) { continue; }
-                if (recycleDepth < 1 || recycleDepth > 1000 ||
-                    static_cast<size_t>(recycleDepth - 1) >= recycleParents.size() ||
-                    recycleParents[recycleDepth - 1] == nullptr)
-                    continue;
-            } else {
-                recycleParents.clear();
+            if (phase == LoadPhase::History || !rootSeen) {
+                fail("回收站记录顺序不正确。"); break;
             }
-            std::string is_dir_str;
-            std::string original_path;
-            std::string name;
-            std::string c_time;
-            std::string m_time;
-            std::string pinned_str;
-            std::string pin_order_str;
-            std::string size_str;
-            std::string content_str;
-            std::string locked_str;
-
-            std::getline(ss, is_dir_str, '|');
-            std::getline(ss, original_path, '|');
-            std::getline(ss, name, '|');
-            std::getline(ss, c_time, '|');
-            std::getline(ss, m_time, '|');
-            std::getline(ss, pinned_str, '|');
-            std::getline(ss, pin_order_str, '|');
-            std::getline(ss, size_str, '|');
-            std::getline(ss, content_str, '|');
-            std::getline(ss, locked_str, '|');
-
-            bool is_directory =
-                (is_dir_str == "D");
-
-            FileNode* recycledNode =
-                file_system->create_recycle_node_for_load(
-                    recycleDepth == 0 ? nullptr : recycleParents[recycleDepth - 1],
-                    name,
-                    is_directory,
-                    original_path
-                    );
-
-            if (recycledNode != nullptr)
+            phase = LoadPhase::Recycle;
+            const bool nested = (type == "RC");
+            const std::size_t base = nested ? 2 : 1;
+            // R: 13 个字段，RC: 14 个字段；兼容早期无锁标志/编码列的 R 记录。
+            if ((!nested && (f.size() < 10 || f.size() > 13)) ||
+                (nested && f.size() != 14))
             {
-                long long size = 0;
-                try { size = std::stoll(size_str); }
-                catch (...) { size = 0; }
-
-                // 回收站节点不属于正常文件树，必须使用专用恢复接口。
-                file_system->restore_recycle_data(
-                    recycledNode, is_directory ? "" : content_str,
-                    size, c_time, m_time);
-
-                bool is_pinned =
-                    (pinned_str == "1");
-
-                long long pin_order = -1;
-
-                try
-                {
-                    pin_order =
-                        std::stoll(pin_order_str);
+                fail("回收站记录字段数错误。"); break;
+            }
+            const auto field = [&](std::size_t k) -> std::string {
+                return k < f.size() ? f[k] : std::string();
+            };
+            long long depth = 0;
+            if (nested && (!parseNumber(f[1], depth) || depth < 1 || depth > 1000 ||
+                static_cast<std::size_t>(depth - 1) >= recycleParents.size() ||
+                recycleParents[static_cast<std::size_t>(depth - 1)] == nullptr ||
+                !recycleParents[static_cast<std::size_t>(depth - 1)]->is_directory()))
+            {
+                fail("回收站子节点深度或父目录无效。"); break;
+            }
+            const std::string kind = field(base);
+            const std::string originalPath = field(base + 1);
+            const std::string name = field(base + 2);
+            const std::string created = field(base + 3);
+            const std::string modified = field(base + 4);
+            const std::string pinned = field(base + 5);
+            const std::string orderText = field(base + 6);
+            const std::string sizeText = field(base + 7);
+            const std::string contentText = field(base + 8);
+            const std::string locked = field(base + 9);
+            const std::string inherited = field(base + 10);
+            const std::string encoding = field(base + 11);
+            long long size = -1, order = -1;
+            if ((kind != "D" && kind != "F") || name.empty() ||
+                name == "." || name == ".." ||
+                name.find('/') != std::string::npos ||
+                name.find('\\') != std::string::npos ||
+                !validFlag(pinned) ||
+                (!locked.empty() && !validFlag(locked)) ||
+                (!inherited.empty() && !validFlag(inherited)) ||
+                !parseNumber(sizeText, size) || size < 0 ||
+                !parseNumber(orderText, order) || order < -1 ||
+                (nested && !originalPath.empty()) ||
+                (!nested && (originalPath.empty() || originalPath[0] != '/')))
+            {
+                fail("回收站节点属性、文件名或路径不合法。"); break;
+            }
+            // 只有普通文件包含实际字节；回收站旧格式未带编码时视为原文。
+            std::string content;
+            std::string sealedContent;
+            if (kind == "F") {
+                if (encoding == "P1") {
+                    if (!decodeBase64Content(contentText, content)) {
+                        fail("回收站普通文件 Base64 已损坏。"); break;
+                    }
+                } else if (encoding == "X1") {
+                    std::string checked;
+                    if (!decodeBase64Content(contentText, checked)) {
+                        fail("回收站隐私文件 Base64 已损坏。"); break;
+                    }
+                    content = decryptContent(contentText);
+                } else if (encoding == "E1") {
+                    std::string raw;
+                    if (stagedCryptoSalt.empty() ||
+                        !decodeBase64Content(contentText, raw) ||
+                        raw.size() < PrivacyCrypto::kNonceSize + PrivacyCrypto::kTagSize) {
+                        fail("回收站 E1 密文封装或 KDF1 数据损坏。"); break;
+                    }
+                    // 不需要密码即可加载目录树；内容在授权后验证 GCM 标签。
+                    sealedContent = contentText;
+                } else if (encoding.empty()) {
+                    content = contentText;
+                } else {
+                    fail("回收站含未知的内容编码。"); break;
                 }
-                catch (...)
-                {
-                    pin_order = -1;
+                if (encoding != "E1" &&
+                    static_cast<unsigned long long>(size) != content.size()) {
+                    fail("回收站文件大小与解码内容不一致。"); break;
                 }
-
-                file_system->restore_pin_state(
-                    recycledNode,
-                    is_pinned,
-                    pin_order
-                    );
-
-                // 先恢复内容及元数据，最后设置锁定状态
-                file_system->restore_recycle_lock_state(
-                    recycledNode, locked_str == "1"
-                    );
-
-                if (recycleParents.size() <= static_cast<size_t>(recycleDepth))
-                    recycleParents.resize(recycleDepth + 1, nullptr);
-                recycleParents[recycleDepth] = recycledNode;
-                recycleParents.resize(recycleDepth + 1);
+            } else if (!contentText.empty() ||
+                       (!encoding.empty() && encoding != "P1")) {
+                fail("回收站目录含不合法的文件内容。"); break;
             }
-
-            // 回收站节点不能继续走普通文件树加载逻辑
+            FileNode* parent = nested
+                ? recycleParents[static_cast<std::size_t>(depth - 1)] : nullptr;
+            FileNode* node = staging->create_recycle_node_for_load(
+                parent, name, kind == "D", originalPath, inherited == "1");
+            if (node == nullptr ||
+                !staging->restore_recycle_data(node, content, size, created, modified) ||
+                !staging->restore_pin_state(node, pinned == "1", order) ||
+                !staging->restore_recycle_lock_state(node, locked == "1") ||
+                (!sealedContent.empty() &&
+                 !staging->set_sealed_content(node, sealedContent)))
+            {
+                fail("回收站节点恢复失败。"); break;
+            }
+            if (!nested) recycleParents.clear();
+            if (recycleParents.size() <= static_cast<std::size_t>(depth))
+                recycleParents.resize(static_cast<std::size_t>(depth) + 1, nullptr);
+            recycleParents[static_cast<std::size_t>(depth)] = node;
+            recycleParents.resize(static_cast<std::size_t>(depth) + 1);
             continue;
         }
 
-
-        // =======================================================
-        // 普通文件树数据
-        // 格式：
-        // D或F|路径|创建时间|修改时间
-        //    |置顶|pin_order|大小|内容
-        // =======================================================
-        std::string path;
-        std::string c_time;
-        std::string m_time;
-        std::string pinned_str;
-        std::string pin_order_str;
-        std::string size_str;
-        std::string content_str;
-        std::string locked_str;
-
-        std::getline(ss, path, '|');
-        std::getline(ss, c_time, '|');
-        std::getline(ss, m_time, '|');
-        std::getline(ss, pinned_str, '|');
-        std::getline(ss, pin_order_str, '|');
-        std::getline(ss, size_str, '|');
-        std::getline(ss, content_str, '|');
-        std::getline(ss, locked_str, '|');
-
-        if (path == "/" || path.empty())
-            continue;
-
-        size_t lastSlash =
-            path.find_last_of('/');
-
-        if (lastSlash == std::string::npos)
-            continue;
-
-        std::string parentPath =
-            path.substr(0, lastSlash);
-
-        if (parentPath.empty())
-            parentPath = "/";
-
-        std::string name =
-            path.substr(lastSlash + 1);
-
-        FileNode* parentNode =
-            file_system->find_by_path(parentPath);
-
-        if (parentNode == nullptr)
-            continue;
-
-        FileNode* newNode = nullptr;
-
-        if (type == "D")
+        if (type == "D" || type == "F")
         {
-            newNode =
-                file_system->create_folder(
-                    parentNode,
-                    name
-                    );
-        }
-        else if (type == "F")
-        {
-            std::string finalContent = "";
-
-            // 👇 【新增：判断是否需要解密】
-            if (locked_str == "1") {
-                // 如果是锁定文件，说明文件里存的是加密后的 Base64 字符串，需要先解密
-                finalContent = decryptContent(content_str);
+            if (phase != LoadPhase::Active) {
+                fail("活动文件树记录出现在回收站或历史记录之后。"); break;
+            }
+            // 兼容旧版没有锁标志、编码列的行；新版恰好 10 列。
+            if (f.size() < 8 || f.size() > 10) {
+                fail("活动文件树记录字段数错误。"); break;
+            }
+            const auto field = [&](std::size_t k) -> std::string {
+                return k < f.size() ? f[k] : std::string();
+            };
+            const std::string path = field(1);
+            const std::string created = field(2);
+            const std::string modified = field(3);
+            const std::string pinned = field(4);
+            const std::string orderText = field(5);
+            const std::string sizeText = field(6);
+            const std::string contentText = field(7);
+            const std::string locked = field(8);
+            const std::string encoding = field(9);
+            long long size = -1, order = -1;
+            if (path.empty() || path.front() != '/' || !validFlag(pinned) ||
+                (!locked.empty() && !validFlag(locked)) ||
+                !parseNumber(sizeText, size) || size < 0 ||
+                !parseNumber(orderText, order) || order < -1)
+            {
+                fail("文件路径或节点属性格式错误。"); break;
+            }
+            if (path == "/") {
+                // KDF1 行在解析前已移除，因此根目录仍必须是第 1 个活动节点。
+                if (rootSeen || i != 0 || type != "D") {
+                    fail("根目录记录重复或位置错误。"); break;
+                }
+                rootSeen = true;
+                continue;
+            }
+            if (!rootSeen) {
+                fail("缺少文件树根目录记录。"); break;
+            }
+            const std::size_t slash = path.find_last_of('/');
+            const std::string parentPath = slash == 0 ? "/" : path.substr(0, slash);
+            const std::string name = path.substr(slash + 1);
+            if (name.empty() || name == "." || name == ".." ||
+                name.find('\\') != std::string::npos ||
+                name.find('/') != std::string::npos ||
+                path.find("//") != std::string::npos)
+            {
+                fail("文件名或路径结构不合法。"); break;
+            }
+            FileNode* parent = staging->find_by_path(parentPath);
+            if (parent == nullptr || !parent->is_directory()) {
+                fail("文件的父目录不存在，可能有记录丢失或顺序被破坏。"); break;
+            }
+            FileNode* node = nullptr;
+            std::string sealedContent;
+            if (type == "D") {
+                if (!contentText.empty() ||
+                    (!encoding.empty() && encoding != "P1")) {
+                    fail("目录记录包含非法内容。"); break;
+                }
+                node = staging->create_folder(parent, name);
             } else {
-                // 普通文件，直接使用明文
-                finalContent = content_str;
+                std::string content;
+                if (encoding == "P1") {
+                    if (!decodeBase64Content(contentText, content)) {
+                        fail("普通文件内容 Base64 已损坏。"); break;
+                    }
+                } else if (encoding == "X1") {
+                    std::string checked;
+                    if (!decodeBase64Content(contentText, checked)) {
+                        fail("隐私文件内容 Base64 已损坏。"); break;
+                    }
+                    content = decryptContent(contentText);
+                } else if (encoding == "E1") {
+                    std::string raw;
+                    if (stagedCryptoSalt.empty() ||
+                        !decodeBase64Content(contentText, raw) ||
+                        raw.size() < PrivacyCrypto::kNonceSize + PrivacyCrypto::kTagSize) {
+                        fail("文件 E1 密文封装或 KDF1 数据损坏。"); break;
+                    }
+                    sealedContent = contentText;
+                } else if (encoding.empty()) {
+                    // 兼容旧版：主动锁定的文件是 XOR+Base64，其余为明文。
+                    content = locked == "1" ? decryptContent(contentText) : contentText;
+                } else {
+                    fail("文件使用了未知编码格式。"); break;
+                }
+                if (encoding != "E1" &&
+                    static_cast<unsigned long long>(size) != content.size()) {
+                    fail("文件大小与解码内容不一致。"); break;
+                }
+                node = staging->create_file(parent, name, content);
             }
-
-            // 把最终内容设置进节点
-            file_system->set_content(newNode, finalContent);
-        }
-        else
-        {
-            // 未知记录类型直接忽略
+            if (node == nullptr ||
+                !staging->set_metadata(node, size, created, modified) ||
+                !staging->restore_pin_state(node, pinned == "1", order) ||
+                !staging->restore_lock_state(node, locked == "1") ||
+                (!sealedContent.empty() &&
+                 !staging->set_sealed_content(node, sealedContent)))
+            {
+                fail("无法恢复文件或文件夹，可能存在重名或非法名称。"); break;
+            }
             continue;
         }
 
-        if (newNode != nullptr)
+        fail("遇到未知的存档记录类型：" + QString::fromStdString(type));
+        break;
+    }
+
+    if (!damaged && !rootSeen) {
+        damaged = true;
+        reason = "未找到文件系统根目录记录。";
+    }
+    // 新存档的结尾必须包含 HIDX；这可防止某些结构性截断。
+    if (!damaged && hasChecksum && !indexSeen) {
+        damaged = true;
+        reason = "新版存档缺少 HIDX 历史记录结尾。";
+    }
+    if (damaged) {
+        loadingError(reason);
+        return;
+    }
+
+    // 全部记录验证及构建成功，此时才正式切换文件系统。
+    FileSystem* oldSystem = file_system;
+    file_system = staging.release();
+    delete oldSystem;
+    history_list = stagedHistory;
+    history_replace_index = stagedHistoryIndex;
+    crypto_salt_ = stagedCryptoSalt;
+    crypto_iterations_ = stagedCryptoIterations;
+    data_load_blocked_ = false;
+    data_load_error_.clear();
+}
+
+void MainWindow::closeEvent(QCloseEvent *event)
+{
+    if (!save_data())
+    {
+        QMessageBox::StandardButton choice =
+            QMessageBox::warning(
+                this,
+                "退出前保存失败",
+                "当前数据尚未成功写入磁盘。\n"
+                "直接退出可能丢失本次修改。\n\n"
+                "是否仍然退出？",
+                QMessageBox::Yes | QMessageBox::No,
+                QMessageBox::No
+                );
+
+        if (choice != QMessageBox::Yes)
         {
-            // 文件内容会影响 size 和修改时间，
-            // 所以先恢复内容。
-            if (type == "F")
-            {
-                file_system->set_content(
-                    newNode,
-                    content_str
-                    );
-            }
+            is_logout_action = false;
+            qApp->setProperty("is_logout_requested", false);
 
-            long long size = 0;
-
-            try
-            {
-                size =
-                    std::stoll(size_str);
-            }
-            catch (...)
-            {
-                size = 0;
-            }
-
-            // 再恢复原始大小和时间
-            file_system->set_metadata(
-                newNode,
-                size,
-                c_time,
-                m_time
-                );
-
-            bool is_pinned =
-                (pinned_str == "1");
-
-            long long pin_order = -1;
-
-            try
-            {
-                pin_order =
-                    std::stoll(pin_order_str);
-            }
-            catch (...)
-            {
-                pin_order = -1;
-            }
-
-            // 最后恢复置顶状态和顺序
-            file_system->restore_pin_state(
-                newNode,
-                is_pinned,
-                pin_order
-                );
-
-            // 先恢复内容及元数据，最后设置锁定状态
-            file_system->restore_lock_state(
-                newNode, locked_str == "1"
-                );
+            event->ignore();
+            return;
         }
     }
 
-    in.close();
-}
-
-
-// 重写 closeEvent（极其核心的防崩溃逻辑！）
-void MainWindow::closeEvent(QCloseEvent *event)
-{
-    save_data(); // 1. 无论怎么关，先保存当前用户的数据！
-
     if (is_logout_action) {
         // === 2. 如果是注销，必须彻底清理所有旧内存，防止新用户登录后指针悬空崩溃 ===
+        discard_privacy_key();
         delete file_system; // 释放底层文件系统
         file_system = nullptr;
 
@@ -2925,6 +4037,10 @@ void MainWindow::addToListWidget(FileNode* node)
 
     if (node->is_locked())
         tooltip += "\n状态：已锁定";
+    else if (is_privacy_protected(node))
+    {
+        tooltip += "\n状态：受上级文件夹保护";
+    }
 
     item->setToolTip(tooltip);
 
@@ -2985,6 +4101,18 @@ void MainWindow::on_btn_restore_clicked()
     FileNode* parent =
         file_system->find_by_path(parentPath);
 
+    // 检查回收站项目及恢复目标目录的访问权限
+    if (!can_access_node(parent))
+    {
+        QMessageBox::warning(
+            this,
+            "恢复失败",
+            "原位置所在文件夹受到隐私保护，"
+            "请先显示隐私文件。"
+            );
+        return;
+    }
+
     if (parent == nullptr)
     {
         QMessageBox::warning(
@@ -3010,6 +4138,19 @@ void MainWindow::on_btn_restore_clicked()
             );
         return;
     }
+    // 回收站的 E1 原本可能继承父目录保护。如果原目录后来解除保护，
+    // 恢复时给整棵子树补上锁标志，防止密文被当成普通文件覆盖。
+    bool anySealed = false;
+    std::function<void(FileNode*)> scanSealed = [&](FileNode* current) {
+        if (!current->get_sealed_content().empty()) anySealed = true;
+        for (FileNode* child = current->get_first_child(); child;
+             child = child->get_next_sibling())
+            scanSealed(child);
+    };
+    scanSealed(node);
+    if (anySealed && !is_privacy_protected(node))
+        file_system->set_locked(node, true);
+
     Operation op;
     op.type = OperationType::RESTORE;
     op.node = node;
@@ -3072,6 +4213,7 @@ void MainWindow::on_btn_permanent_delete_clicked()
     while (!undo_stack.empty()) undo_stack.pop();
     clipboard_node = nullptr;
     clipboard_mode = ClipboardMode::None;
+    save_data();
     refresh_file_list();
     refresh_tree();
 }
@@ -3109,6 +4251,7 @@ void MainWindow::on_btn_clear_recycle_clicked()
     while (!undo_stack.empty()) undo_stack.pop();
     clipboard_node = nullptr;
     clipboard_mode = ClipboardMode::None;
+    save_data();
     refresh_file_list();
     refresh_tree();
 }
@@ -3116,6 +4259,9 @@ void MainWindow::on_btn_clear_recycle_clicked()
 
 void MainWindow::on_btn_undo_clicked()
 {
+    if (recycle_mode || privacy_overview_mode)
+        return;
+
     if (undo_stack.empty())
     {
         QMessageBox::warning(
@@ -3132,11 +4278,132 @@ void MainWindow::on_btn_undo_clicked()
             file_system->get_current_directory()
             );
 
-    // 取出栈顶操作
-    Operation op =
-        undo_stack.top();
 
-    // 执行逆操作
+    // 取出栈顶操作，但先不要弹出
+    Operation op = undo_stack.top();
+
+    // 统一提示函数
+    auto showUndoDenied = [this](const QString& message)
+    {
+        QMessageBox::warning(
+            this,
+            "无法撤销",
+            message
+            );
+    };
+
+    // 先确认所有会被使用的指针仍然有效。
+    // 验证完成前，不得调用 node->get_parent() 等函数。
+    bool nodeValid = false;
+    bool parentValid = false;
+
+    switch (op.type)
+    {
+    case OperationType::DELETE:
+        nodeValid =
+            file_system->contains_recycle_root(op.node);
+        parentValid =
+            file_system->contains_active_node(op.old_parent);
+        break;
+
+    case OperationType::MOVE:
+        nodeValid =
+            file_system->contains_active_node(op.node);
+        parentValid =
+            file_system->contains_active_node(op.old_parent);
+        break;
+
+    case OperationType::CREATE:
+    case OperationType::RENAME:
+    case OperationType::COPY:
+    case OperationType::RESTORE:
+        nodeValid =
+            file_system->contains_active_node(op.node);
+        parentValid = true;
+        break;
+
+    default:
+        break;
+    }
+
+    // 无效的撤销记录不应继续留在栈顶
+    if (!nodeValid || !parentValid)
+    {
+        undo_stack.pop();
+
+        showUndoDenied(
+            "撤销记录引用的文件或目录已经失效，"
+            "该记录已从撤销历史中移除。"
+            );
+        return;
+    }
+
+    // 以下开始，相关节点已经完成有效性检查。
+    switch (op.type)
+    {
+    case OperationType::DELETE:
+        // 从回收站恢复整个项目，不要求查看项目内部。
+        // 但恢复目标目录如果受到保护，必须先授权。
+        if (!can_access_node(op.old_parent))
+        {
+            showUndoDenied(
+                "原目录受到隐私保护，"
+                "请先显示隐私文件并验证密码。"
+                );
+            return;
+        }
+        break;
+
+    case OperationType::RENAME:
+        // 重命名直接修改活动节点的属性。
+        if (!can_access_node(op.node))
+        {
+            showUndoDenied(
+                "该文件受到隐私保护，"
+                "请先验证隐私密码再撤销重命名。"
+                );
+            return;
+        }
+        break;
+
+    case OperationType::MOVE:
+        // 移回目标目录，需要拥有目标目录的访问权限。
+        if (!can_access_node(op.old_parent))
+        {
+            showUndoDenied(
+                "原目标目录受到隐私保护，"
+                "请先验证隐私密码。"
+                );
+            return;
+        }
+
+        // 节点本身没有主动上锁、只是从当前父目录
+        // 继承保护时，不允许未经授权直接移出。
+        // 否则移入未锁定目录后，内容可能暴露。
+        if (!can_access_node(op.node) &&
+            !op.node->is_locked())
+        {
+            showUndoDenied(
+                "移动的项目正在继承上级目录的隐私保护。\n"
+                "请先验证隐私密码再撤销移动。"
+                );
+            return;
+        }
+        break;
+
+    case OperationType::CREATE:
+    case OperationType::COPY:
+    case OperationType::RESTORE:
+        // 相当于把整个箱子移入回收站，
+        // 不需要打开箱子查看内容。
+        break;
+
+    default:
+        showUndoDenied("不支持该撤销类型。");
+        return;
+    }
+
+    // 安全检查通过后，再执行底层撤销
     bool success =
         file_system->undo(op);
 
@@ -3153,7 +4420,8 @@ void MainWindow::on_btn_undo_clicked()
                 );
 
         if (oldCurrentNode != nullptr &&
-            oldCurrentNode->is_directory())
+            oldCurrentNode->is_directory() &&
+            can_access_node(oldCurrentNode))
         {
             file_system->change_directory_by_path(
                 oldCurrentPath
@@ -3222,6 +4490,9 @@ void MainWindow::on_btn_reset_clicked()
         // 底层会自动清空正常树、回收站，并将当前目录重置为根目录
         // =======================================================
         file_system->reset();
+        PrivacyCrypto::wipe(crypto_session_key_);
+        crypto_salt_.clear();
+        crypto_iterations_ = PrivacyCrypto::kIterations;
 
         // =======================================================
         // 4. 清理所有悬空指针（极其关键，防止重置后操作崩溃）
@@ -3253,6 +4524,9 @@ void MainWindow::on_btn_reset_clicked()
 
         // 退出回收站模式
         recycle_mode = false;
+        privacy_overview_mode = false;
+        show_privacy_mode = false;
+        has_privacy_access = false;
 
         // 恢复普通操作按钮
         ui->btn_new->show();
@@ -3316,6 +4590,7 @@ QString MainWindow::hashPassword(const QString& password) {
     return QString(QCryptographicHash::hash((password + salt).toUtf8(), QCryptographicHash::Sha256).toHex());
 }
 
+
 // 验证隐私密码（从 users.txt 读取当前用户的隐私密码哈希比对）
 bool MainWindow::verify_privacy_password(const QString& password) {
     QFile file("users.txt");
@@ -3332,57 +4607,186 @@ bool MainWindow::verify_privacy_password(const QString& password) {
     return false;
 }
 
+
+
 void MainWindow::on_action_lock_clicked()
 {
-    QListWidgetItem* item = ui->list_files->currentItem();
-    if (!item) return;
-    FileNode* node = item->data(Qt::UserRole).value<FileNode*>();
-    if (!node) return;
+    if (recycle_mode)
+        return;
 
-    // 如果是锁定状态，要解锁（需要隐私密码）
-    if (file_system->is_locked(node)) {
-        bool ok;
-        QString pass = QInputDialog::getText(this, "解锁", "请输入隐私密码：", QLineEdit::Password, "", &ok);
-        if (ok && verify_privacy_password(pass)) {
-            file_system->set_locked(node, false); // 解锁
-            refresh_file_list();
-            save_data(); // 触发持久化
-            ui->statusbar->showMessage("已解锁！", 2000);
-        } else if (ok) {
-            QMessageBox::warning(this, "错误", "隐私密码错误！");
+    QListWidgetItem* item =
+        ui->list_files->currentItem();
+
+    if (item == nullptr)
+        return;
+
+    FileNode* node =
+        item->data(Qt::UserRole).value<FileNode*>();
+
+    if (node == nullptr || !can_access_node(node))
+        return;
+
+    bool currentlyLocked = file_system->is_locked(node);
+
+    // 解锁必须在已验证隐私密码的显示模式下进行
+    if (currentlyLocked)
+    {
+        if (!show_privacy_mode || !has_privacy_access)
+        {
+            QMessageBox::warning(
+                this,
+                "访问受限",
+                "请先通过“显示 → 隐私文件”验证密码。"
+                );
+            return;
         }
     }
-    // 如果不是锁定状态，直接上锁
-    else {
-        file_system->set_locked(node, true); // 上锁
-        refresh_file_list();
-        save_data(); // 触发持久化
-        ui->statusbar->showMessage("已上锁！", 2000);
-    }
-}
-void MainWindow::on_action_show_privacy_triggered()
-{
-    // 如果当前是“显示”状态，点击后变成“隐藏”
-    if (show_privacy_mode) {
-        show_privacy_mode = false;
-        has_privacy_access = false; // 收回权限
-        refresh_file_list();
-        ui->statusbar->showMessage("已隐藏隐私文件", 2000);
+
+    // 新上锁时需要真正 AES 密钥，否则不允许继续生成旧版 XOR 密文。
+    if (!currentlyLocked && crypto_session_key_.empty())
+    {
+        QMessageBox::information(this, "需要隐私密码",
+            "首次上锁前需要验证隐私密码以启用 AES-256-GCM。\n"
+            "请先通过“显示 → 隐私文件”验证密码，再重新执行上锁。");
         return;
     }
 
-    // 如果当前是“隐藏”状态，必须验证密码才能显示
-    bool ok;
-    QString pass = QInputDialog::getText(this, "显示隐私文件", "请输入隐私密码查看隐私文件：", QLineEdit::Password, "", &ok);
-    if (ok && verify_privacy_password(pass)) {
-        show_privacy_mode = true;
-        has_privacy_access = true; // 授予当前会话权限
-        refresh_file_list();
-        ui->statusbar->showMessage("隐私文件已显示", 3000);
-    } else if (ok) {
-        QMessageBox::warning(this, "错误", "隐私密码错误！");
+    // 修改锁定状态
+    if (!file_system->set_locked(node, !currentlyLocked))
+    {
+        QMessageBox::warning(
+            this,
+            "操作失败",
+            "无法修改文件锁定状态。"
+            );
+        return;
     }
+
+    // 立即保存并同步两个界面
+    save_data();
+    refresh_tree();
+    refresh_file_list();
+
+    ui->statusbar->showMessage(
+        currentlyLocked ? "已解锁！" : "已上锁，项目已按隐私显示规则处理。",
+        3000
+        );
 }
+
+
+
+void MainWindow::on_action_show_privacy_triggered()
+{
+    // 当前已经显示隐私文件：关闭显示
+    if (show_privacy_mode)
+    {
+        // 必须在撤销授权前将修改过的明文重新认证加密。
+        if (!save_data())
+        {
+            QMessageBox::warning(this, "无法隐藏隐私内容",
+                "安全保存失败。为避免丢失修改，仍保留当前授权，请修复保存错误后重试。");
+            return;
+        }
+        discard_privacy_key();
+        show_privacy_mode = false;
+        has_privacy_access = false;
+        privacy_overview_mode = false;
+
+        // 退出隐私总览后，恢复普通操作按钮
+        ui->btn_new->show();
+        ui->btn_cut->show();
+        ui->btn_copy->show();
+        ui->btn_paste->show();
+        ui->btn_rename->show();
+        ui->btn_delete->show();
+
+        // 不再保留受保护文件的剪贴板引用
+        if (clipboard_node != nullptr &&
+            is_privacy_protected(clipboard_node))
+        {
+            clipboard_node = nullptr;
+            clipboard_mode = ClipboardMode::None;
+        }
+
+        // 如果目前身处锁定文件夹内部，
+        // 收回授权后自动返回根目录
+        FileNode* current =
+            file_system->get_current_directory();
+
+        if (current != nullptr &&
+            is_privacy_protected(current))
+        {
+            file_system->change_directory_by_path("/");
+        }
+
+        // 清理导航栈，避免保留之前的隐私导航路径
+        while (!back_stack.empty())
+            back_stack.pop();
+
+        while (!forward_stack.empty())
+            forward_stack.pop();
+
+        refresh_tree();
+        refresh_file_list();
+
+        ui->lineEdit_path->setText(
+            toDisplayPath(QString::fromStdString(
+                file_system->get_path(
+                    file_system->get_current_directory()
+                    )
+                ))
+            );
+
+        ui->statusbar->showMessage(
+            "已隐藏隐私文件，隐私访问授权已撤销。",
+            3000
+            );
+
+        return;
+    }
+
+    // 从隐藏变为显示，需要验证密码
+    bool ok = false;
+
+    QString password = QInputDialog::getText(
+        this,
+        "显示隐私文件",
+        "请输入隐私密码：",
+        QLineEdit::Password,
+        "",
+        &ok
+        );
+
+    if (!ok)
+        return;
+
+    if (!verify_privacy_password(password))
+    {
+        QMessageBox::warning(
+            this,
+            "验证失败",
+            "隐私密码错误！"
+            );
+        return;
+    }
+
+    // 不覆盖原密文：先用输入密码解开所有 E1 项并校验认证标签。
+    if (!unlock_encrypted_content(password))
+        return;
+
+    // 验证通过，开放本次会话的隐私访问
+    show_privacy_mode = true;
+    has_privacy_access = true;
+
+    refresh_tree();
+    refresh_file_list();
+
+    ui->statusbar->showMessage(
+        "隐私文件已显示，现在可以正常访问。",
+        3000
+        );
+}
+
 
 // 简单的异或加密 + Base64编码
 std::string MainWindow::encryptContent(const std::string& content)
@@ -3418,4 +4822,152 @@ std::string MainWindow::decryptContent(const std::string& encryptedContent)
     }
 
     return decrypted;
+}
+
+// =========== AES-256-GCM / PBKDF2 密钥与内容保护 ===========
+void MainWindow::discard_privacy_key()
+{
+    if (file_system)
+        file_system->wipe_sealed_plaintext();
+    PrivacyCrypto::wipe(crypto_session_key_);
+}
+
+bool MainWindow::unlock_encrypted_content(const QString& password)
+{
+    // KDF salt 可公开保存在 KDF1 中；只在密码通过 users.txt 验证后派生密钥。
+    std::string salt = crypto_salt_;
+    if (salt.empty() && !PrivacyCrypto::randomBytes(salt, PrivacyCrypto::kSaltSize))
+    {
+        QMessageBox::critical(this, "加密失败", "无法生成安全随机盐。请检查 OpenSSL。 ");
+        return false;
+    }
+    QByteArray utf8 = password.toUtf8();
+    std::string rawPassword(utf8.constData(), static_cast<std::size_t>(utf8.size()));
+    std::string key;
+    const bool derived = PrivacyCrypto::deriveKey(
+        rawPassword, salt, crypto_iterations_, key);
+    PrivacyCrypto::wipe(rawPassword);
+    utf8.fill('\0');
+    if (!derived) {
+        QMessageBox::critical(this, "加密失败", "PBKDF2 派生密钥失败。");
+        return false;
+    }
+
+    // 两阶段：全部解密及认证成功后，才修改任何 FileNode。
+    std::vector<std::pair<FileNode*, std::string>> decoded;
+    bool verified = true;
+    auto readEncrypted = [&](FileNode* node) {
+        if (!verified || node->is_directory() || node->get_sealed_content().empty())
+            return;
+        std::string raw, plain;
+        if (!decodeBase64Content(node->get_sealed_content(), raw) ||
+            !PrivacyCrypto::decrypt(raw, key, plain) ||
+            plain.size() != static_cast<std::size_t>(node->get_size()))
+        {
+            PrivacyCrypto::wipe(plain);
+            verified = false;
+            return;
+        }
+        decoded.emplace_back(node, std::move(plain));
+    };
+    file_system->traverse(file_system->get_root(), readEncrypted);
+    std::function<void(FileNode*)> readRecycle = [&](FileNode* node) {
+        readEncrypted(node);
+        for (FileNode* child = node->get_first_child(); child; child = child->get_next_sibling())
+            readRecycle(child);
+    };
+    file_system->for_each_recycle_item(
+        [&](FileNode* root, const std::string&) { readRecycle(root); });
+
+    if (!verified)
+    {
+        for (auto& item : decoded) PrivacyCrypto::wipe(item.second);
+        PrivacyCrypto::wipe(key);
+        QMessageBox::critical(this, "解密失败",
+            "AES-GCM 认证失败：可能是隐私密码已改变、加密内容被篡改或存档损坏。\n"
+            "未修改任何文件内容，原有密文仍然保留。请检查备份与密码变更记录。");
+        return false;
+    }
+
+    for (auto& item : decoded)
+    {
+        if (!file_system->set_transient_plain_content(item.first, item.second))
+        {
+            // 仅内部状态错误才会出现；所有解码数据来自有效节点。
+            file_system->wipe_sealed_plaintext();
+            PrivacyCrypto::wipe(key);
+            QMessageBox::critical(this, "解密失败", "明文加载出现内部错误。");
+            return false;
+        }
+        PrivacyCrypto::wipe(item.second);
+    }
+    crypto_salt_ = salt;
+    PrivacyCrypto::wipe(crypto_session_key_);
+    crypto_session_key_.swap(key);
+    return true;
+}
+
+bool MainWindow::prepare_encrypted_content_for_save()
+{
+    // 不进行部分更新：先准备所有新 E1 数据，再统一替换旧密文。
+    std::vector<std::pair<FileNode*, std::string>> replacements;
+    std::vector<FileNode*> toClear;
+    bool success = true;
+    QString error;
+    auto prepare = [&](FileNode* node, bool protectedNode) {
+        if (!success || node->is_directory()) return;
+        if (protectedNode)
+        {
+            if (!crypto_session_key_.empty())
+            {
+                if (node->get_size() < 0 ||
+                    node->get_content().size() != static_cast<std::size_t>(node->get_size()))
+                {
+                    success = false;
+                    error = "加密文件缺少已解密内容，已阻止保存。";
+                    return;
+                }
+                std::string packed;
+                if (!PrivacyCrypto::encrypt(node->get_content(), crypto_session_key_, packed))
+                {
+                    success = false;
+                    error = "OpenSSL AES-256-GCM 加密失败。";
+                    return;
+                }
+                replacements.emplace_back(node, encodePlainContent(packed));
+            }
+            // 没有密码时 E1 原密文直接保留；旧 X1 只兼容读取及原样写回。
+        }
+        else if (!node->get_sealed_content().empty())
+        {
+            if (crypto_session_key_.empty())
+            {
+                success = false;
+                error = "存在尚未解密却不再受保护的文件。请先验证隐私密码。";
+                return;
+            }
+            toClear.push_back(node);
+        }
+    };
+    file_system->traverse(file_system->get_root(), [&](FileNode* node) {
+        prepare(node, is_privacy_protected(node));
+    });
+    std::function<void(FileNode*)> visitRecycle = [&](FileNode* node) {
+        prepare(node, file_system->is_recycle_privacy_protected(node));
+        for (FileNode* child = node->get_first_child(); child; child = child->get_next_sibling())
+            visitRecycle(child);
+    };
+    file_system->for_each_recycle_item(
+        [&](FileNode* root, const std::string&) { visitRecycle(root); });
+    if (!success)
+    {
+        QMessageBox::critical(this, "加密存档失败", error +
+            "\n为了保护旧数据，本次未覆盖存档。");
+        return false;
+    }
+    for (const auto& item : replacements)
+        file_system->set_sealed_content(item.first, item.second);
+    for (FileNode* node : toClear)
+        file_system->clear_sealed_content(node);
+    return true;
 }

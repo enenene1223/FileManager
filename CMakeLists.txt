@@ -51,3 +51,9 @@ qt_generate_deploy_app_script(
     NO_UNSUPPORTED_PLATFORM_ERROR
 )
 install(SCRIPT ${deploy_script})
+# FileManager AES-256-GCM sources
+target_sources(FileManager PRIVATE PrivacyCrypto.cpp PrivacyCrypto.h)
+
+# FileManager AES-256-GCM crypto dependency
+find_package(OpenSSL REQUIRED)
+target_link_libraries(FileManager PRIVATE OpenSSL::Crypto)

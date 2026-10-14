@@ -142,6 +142,13 @@ public:
 
     const std::string &get_content(FileNode *file) const;
 
+    // 加密存档辅助：不改变节点大小、创建/修改时间。
+    // 仅用于从存档恢复密文或授权后解密/重封装内容。
+    bool set_sealed_content(FileNode* node, const std::string& encoded);
+    bool set_transient_plain_content(FileNode* node, const std::string& content);
+    void clear_sealed_content(FileNode* node);
+    void wipe_sealed_plaintext();
+
 
     // =========================
     // 属性 / 持久化
@@ -163,6 +170,13 @@ public:
 
     FileNode *get_root() const;
 
+    // 安全检查：只比较指针地址，不解引用传入的指针
+    // 判断节点是否仍存在于活动文件树中
+    bool contains_active_node(const FileNode* node) const;
+
+    // 判断节点是否仍是回收站的顶层项目
+    bool contains_recycle_root(const FileNode* node) const;
+
 
     // =========================
     // 回收站
@@ -170,6 +184,14 @@ public:
     bool is_in_recycle_bin(FileNode *node) const;
 
     std::string get_recycle_original_path(FileNode *node) const;
+
+    // 判断回收站项目是否受到隐私保护
+    // 包括自身主动上锁、回收站内部祖先上锁、
+    // 删除前从原父目录继承的保护
+    bool is_recycle_privacy_protected(FileNode* node) const;
+
+    // 查询回收站顶层项目删除前的继承保护状态
+    bool get_recycle_inherited_privacy(FileNode* node) const;
 
     std::size_t get_recycle_count() const;
 
@@ -179,7 +201,8 @@ public:
         FileNode* recycle_parent,
         const std::string& name,
         bool is_directory,
-        const std::string& original_path = ""
+        const std::string& original_path = "",
+        bool inherited_privacy = false
         );
 
 
@@ -217,16 +240,28 @@ public:
 private:
     struct RecycleEntry
     {
-        FileNode *node;
+        FileNode* node;
         std::string original_path;
-        RecycleEntry *next;
 
-        RecycleEntry(FileNode *node_value, const std::string &path_value, RecycleEntry *next_value)
+        // 删除时是否继承了原父目录的隐私保护
+        bool inherited_privacy;
+
+        RecycleEntry* next;
+
+        RecycleEntry(
+            FileNode* node_value,
+            const std::string& path_value,
+            RecycleEntry* next_value,
+            bool inherited_value = false
+            )
             : node(node_value)
             , original_path(path_value)
+            , inherited_privacy(inherited_value)
             , next(next_value)
-        {}
+        {
+        }
     };
+
 
     FileNode *root_;
     FileNode *current_directory_;

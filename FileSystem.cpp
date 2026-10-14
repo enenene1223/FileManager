@@ -5,6 +5,7 @@
 #include <iomanip>
 #include <sstream>
 #include <cctype>
+#include "PrivacyCrypto.h"
 
 
 // 后缀验证辅助函数
@@ -150,6 +151,21 @@ bool FileSystem::delete_node(FileNode *node)
     const std::string original_path = get_path(node);
     FileNode *old_parent = node->parent_;
 
+    // 记录该节点是否受到上级文件夹的隐私保护。
+    // 删除后父指针会断开，因此必须提前判断。
+    bool inheritedPrivacy = false;
+
+    for (FileNode* parent = old_parent;
+         parent != nullptr;
+         parent = parent->parent_)
+    {
+        if (parent->is_locked_)
+        {
+            inheritedPrivacy = true;
+            break;
+        }
+    }
+
     if (!detach_node(node)) {
         set_error(FileSystemError::INVALID_NODE);
         return false;
@@ -163,7 +179,12 @@ bool FileSystem::delete_node(FileNode *node)
     node->parent_ = nullptr;
     node->next_sibling_ = nullptr;
 
-    recycle_head_ = new RecycleEntry(node, original_path, recycle_head_);
+    recycle_head_ = new RecycleEntry(
+        node,
+        original_path,
+        recycle_head_,
+        inheritedPrivacy
+        );
     ++recycle_count_;
     return true;
 }
@@ -192,6 +213,18 @@ bool FileSystem::restore_node(FileNode *node, FileNode *target_parent)
     if (has_name_conflict(target_parent, node->name_)) {
         set_error(FileSystemError::NAME_CONFLICT);
         return false;
+    }
+
+    // 恢复时如果原先继承的隐私父目录已经不再锁定，
+    // 则把保护标志转移到当前回收站根节点，防止内容意外公开。
+    if (entry->inherited_privacy)
+    {
+        bool protectedTarget = false;
+        for (FileNode* p = target_parent; p; p = p->parent_)
+        {
+            if (p->is_locked_) { protectedTarget = true; break; }
+        }
+        if (!protectedTarget) node->is_locked_ = true;
     }
 
     node->parent_ = nullptr;
@@ -476,6 +509,40 @@ const std::string &FileSystem::get_content(FileNode *file) const
 }
 
 
+// 供受信任的加载器和已验证密码的 GUI 调用：在临时存档、
+// 正常目录树与回收站节点之间保留 E1 密文，不改变元数据。
+bool FileSystem::set_sealed_content(FileNode* node, const std::string& encoded)
+{
+    if (!node || node->is_directory_) return false;
+    node->sealed_content_ = encoded;
+    return true;
+}
+
+bool FileSystem::set_transient_plain_content(FileNode* node, const std::string& content)
+{
+    if (!node || node->is_directory_ || node->sealed_content_.empty()) return false;
+    if (content.size() != static_cast<std::size_t>(node->size_)) return false;
+    node->content_ = content;
+    return true;
+}
+
+void FileSystem::clear_sealed_content(FileNode* node)
+{
+    if (node && !node->is_directory_) node->sealed_content_.clear();
+}
+
+void FileSystem::wipe_sealed_plaintext()
+{
+    // 遍历的节点均来自已拥有的树或回收站，不解引用外部指针。
+    const auto wipeOne = [](FileNode* node) {
+        if (!node->sealed_content_.empty())
+            PrivacyCrypto::wipe(node->content_);
+    };
+    traverse_recursive(root_, wipeOne);
+    for (RecycleEntry* entry = recycle_head_; entry; entry = entry->next)
+        traverse_recursive(entry->node, wipeOne);
+}
+
 bool FileSystem::set_metadata(FileNode *node,
                               long long size,
                               const std::string &created_time,
@@ -528,6 +595,47 @@ FileNode *FileSystem::get_root() const
 }
 
 
+
+bool FileSystem::contains_active_node(
+    const FileNode* node) const
+{
+    if (node == nullptr || root_ == nullptr)
+        return false;
+
+    bool found = false;
+
+    // 从真实根节点出发，只访问有效的活动树节点
+    traverse(
+        root_,
+        [&](FileNode* current)
+        {
+            if (current == node)
+                found = true;
+        }
+        );
+
+    return found;
+}
+
+bool FileSystem::contains_recycle_root(
+    const FileNode* node) const
+{
+    if (node == nullptr)
+        return false;
+
+    // 只比较地址，不访问 node->parent_ 等成员
+    for (const RecycleEntry* entry = recycle_head_;
+         entry != nullptr;
+         entry = entry->next)
+    {
+        if (entry->node == node)
+            return true;
+    }
+
+    return false;
+}
+
+
 void FileSystem::traverse(FileNode *start_node, const NodeVisitor &visitor) const
 {
     if (start_node == nullptr || !owns_active_node(start_node) || !visitor) {
@@ -549,6 +657,48 @@ std::string FileSystem::get_recycle_original_path(FileNode *node) const
     const RecycleEntry *entry = find_recycle_entry(node);
     return entry == nullptr ? std::string() : entry->original_path;
 }
+
+
+bool FileSystem::get_recycle_inherited_privacy(
+    FileNode* node) const
+{
+    RecycleEntry* entry = find_recycle_entry(node);
+
+    if (entry == nullptr)
+        return false;
+
+    return entry->inherited_privacy;
+}
+
+bool FileSystem::is_recycle_privacy_protected(
+    FileNode* node) const
+{
+    if (node == nullptr)
+        return false;
+
+    // 从当前节点沿回收站内部父指针向上检查
+    FileNode* root = node;
+
+    for (FileNode* p = node;
+         p != nullptr;
+         p = p->get_parent())
+    {
+        if (p->is_locked())
+            return true;
+
+        root = p;
+    }
+
+    // root 是回收站顶层节点。
+    // 只有确实存在对应回收站记录，才能查询继承保护。
+    RecycleEntry* entry = find_recycle_entry(root);
+
+    if (entry == nullptr)
+        return false;
+
+    return entry->inherited_privacy;
+}
+
 
 
 std::size_t FileSystem::get_recycle_count() const
@@ -757,6 +907,7 @@ FileNode *FileSystem::clone_subtree(FileNode *source, FileNode *new_parent)
     copy->modified_time_ = source->modified_time_;
     copy->size_ = source->size_;
     copy->content_ = source->content_;
+    copy->sealed_content_ = source->sealed_content_;
     // 保留节点自身的锁定状态
     copy->is_locked_ = source->is_locked_;
 
@@ -885,6 +1036,37 @@ bool FileSystem::is_pinned(FileNode* node) const // 检查置顶状态
 
 bool FileSystem::undo(const Operation &operation)
 {
+    // 先检查撤销记录引用的节点是否仍然有效。
+    switch (operation.type)
+    {
+    case OperationType::CREATE:
+    case OperationType::RENAME:
+    case OperationType::COPY:
+    case OperationType::RESTORE:
+        // 这些操作的撤销目标必须仍在活动文件树中
+        if (!contains_active_node(operation.node))
+            return false;
+        break;
+
+    case OperationType::DELETE:
+        // 撤销删除：node 必须仍位于回收站顶层，
+        // 原父目录必须仍在活动树中。
+        if (!contains_recycle_root(operation.node) ||
+            !contains_active_node(operation.old_parent))
+            return false;
+        break;
+
+    case OperationType::MOVE:
+        // 撤销移动：节点和原父目录都必须仍然有效。
+        if (!contains_active_node(operation.node) ||
+            !contains_active_node(operation.old_parent))
+            return false;
+        break;
+
+    default:
+        return false;
+    }
+
     switch (operation.type)
     {
     case OperationType::CREATE:
@@ -1027,7 +1209,8 @@ FileNode* FileSystem::create_recycle_node_for_load(
     FileNode* recycle_parent,
     const std::string& name,
     bool is_directory,
-    const std::string& original_path)
+    const std::string& original_path,
+    bool inherited_privacy)
 {
     set_error(FileSystemError::NONE);
 
@@ -1040,8 +1223,12 @@ FileNode* FileSystem::create_recycle_node_for_load(
 
     // 情况1：回收站顶层节点
     if (recycle_parent == nullptr) {
-        RecycleEntry* entry =
-            new RecycleEntry(node, original_path, recycle_head_);
+        RecycleEntry* entry = new RecycleEntry(
+            node,
+            original_path,
+            recycle_head_,
+            inherited_privacy
+            );
 
         recycle_head_ = entry;
         ++recycle_count_;
