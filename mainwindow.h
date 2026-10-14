@@ -60,7 +60,7 @@ private slots:
 
     void on_btn_refresh_clicked();
 
-    void save_node_recursive(FileNode* node, std::ofstream& out); // 递归辅助函数
+    void save_node_recursive(FileNode* node, std::ostream& out); // 递归辅助函数
 
     // 回收站
     void on_btn_restore_clicked();
@@ -84,8 +84,20 @@ private:
     std::string encryptContent(const std::string& content);
     std::string decryptContent(const std::string& encryptedContent);
 
+    // AES-256-GCM / PBKDF2：salt 写入 KDF1，key 仅在已授权会话中保留。
+    std::string crypto_salt_;
+    int crypto_iterations_ = 300000;
+    std::string crypto_session_key_;
+    bool unlock_encrypted_content(const QString& password);
+    bool prepare_encrypted_content_for_save();
+    void discard_privacy_key();
+
     bool verify_privacy_password(const QString& password); // 校验隐私密码
-    QString hashPassword(const QString& password);         // 哈希工具（复用登录界面的逻辑）
+    // 判断节点自身或祖先文件夹是否被锁定
+    bool is_privacy_protected(FileNode* node) const;
+    // 判断当前会话是否允许访问该节点
+    bool can_access_node(FileNode* node) const;
+    QString hashPassword(const QString& password);  // 哈希工具（复用登录界面的逻辑）
 
     // 导航用的两个栈
     std::stack<std::string> back_stack;
@@ -116,11 +128,22 @@ private:
     // 显示文件或文件夹的只读属性
     void show_node_properties(FileNode* node);
 
+    // 打开内置 TXT 编辑器
+    void open_text_editor(FileNode* node);
+
     // 持久化
-    void save_data();
+    bool save_data();
     void load_data();
 
+    // 加载失败时禁止覆写原始存档，等待用户手动恢复
+    bool data_load_blocked_ = false;
+    QString data_load_error_;
+
+    // 回收站
     bool recycle_mode = false;
+
+    // 当前是否正在查看“隐私文件总览”
+    bool privacy_overview_mode = false;
 
     // 删除选中文件或文件夹
     void delete_selected_item(bool needConfirm);

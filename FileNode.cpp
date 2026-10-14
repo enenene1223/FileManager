@@ -10,6 +10,7 @@ FileNode::FileNode(const std::string &name, bool is_directory)
     , created_time_()
     , modified_time_()
     , content_()
+    , sealed_content_()
     , parent_(nullptr)
     , first_child_(nullptr)
     , next_sibling_(nullptr)
@@ -79,4 +80,9 @@ FileNode *FileNode::get_first_child() const
 FileNode *FileNode::get_next_sibling() const
 {
     return next_sibling_;
+}
+
+const std::string &FileNode::get_sealed_content() const
+{
+    return sealed_content_;
 }

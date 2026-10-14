@@ -33,6 +33,8 @@ public:
     const std::string &get_created_time() const;
     const std::string &get_modified_time() const;
     const std::string &get_content() const;
+    // E1 密文缓存，未授权时 FileNode::content_ 为空。
+    const std::string &get_sealed_content() const;
 
     FileNode *get_parent() const;
     FileNode *get_first_child() const;
@@ -53,6 +55,7 @@ private:
     std::string created_time_;
     std::string modified_time_;
     std::string content_;
+    std::string sealed_content_; // Base64(AES-GCM nonce|ciphertext|tag)
 
     FileNode *parent_;
     FileNode *first_child_;
