@@ -7,6 +7,7 @@
 #include <QJsonArray>
 #include <QDialog>
 #include <QVBoxLayout>
+#include <QHBoxLayout>
 #include <QComboBox>
 #include <QPlainTextEdit>
 #include <QPushButton>
@@ -26,12 +27,15 @@ void MainWindow::open_ai_tools()
     auto mode = new QComboBox; mode->addItems({"自然语言搜索", "选中文件归类推荐", "选中 TXT 摘要"});
     auto input = new QPlainTextEdit;
     input->setPlaceholderText("例如：查找最近的学习笔记 TXT 文件。归类或摘要时，请先在主窗口选中文件。");
-    auto description = new QLabel("可在“AI 服务设置”中安全保存密钥，也兼容 DEEPSEEK_API_KEY 环境变量。\n只有点击发送并确认后才上传。加密文件正文禁止上传。AI 失败可继续本地搜索。");
+    auto description = new QLabel("可在“AI 服务设置”中安全保存密钥。");
     description->setWordWrap(true);
     auto send = new QPushButton("发送给 DeepSeek");
     auto output = new QPlainTextEdit; output->setReadOnly(true);
-    layout->addWidget(description); layout->addWidget(mode); layout->addWidget(input); layout->addWidget(send); layout->addWidget(output);
-    auto settingsButton = new QPushButton("AI 服务设置", &dialog); layout->insertWidget(1, settingsButton);
+    auto settingsButton = new QPushButton("AI 服务设置", &dialog);
+    settingsButton->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
+    auto header = new QHBoxLayout;
+    header->addWidget(description, 1); header->addWidget(settingsButton, 0, Qt::AlignTop);
+    layout->addLayout(header); layout->addWidget(mode); layout->addWidget(input); layout->addWidget(send); layout->addWidget(output);
     connect(settingsButton, &QPushButton::clicked, &dialog, [this, &dialog] { AiSettingsDialog settings(&dialog, ai_credentials_); settings.exec(); });
     auto manager = new QNetworkAccessManager(&dialog);
     connect(send, &QPushButton::clicked, &dialog, [&] {

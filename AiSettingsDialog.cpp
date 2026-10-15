@@ -14,12 +14,17 @@
 #include <QTimer>
 
 AiSettingsDialog::AiSettingsDialog(QWidget* parent, AiCredentialStore store, QNetworkAccessManager* network) : QDialog(parent) {
-    setWindowTitle("AI 服务设置"); setObjectName("ai_settings_dialog"); resize(590, 330);
+    setWindowTitle("AI 服务设置"); setObjectName("ai_settings_dialog"); resize(760, 330);
     auto layout = new QVBoxLayout(this); auto form = new QFormLayout;
-    auto info = new QLabel("DeepSeek · https://api.deepseek.com\n密钥保存在当前 Windows 用户的凭据管理器中，不写入项目或安装目录。", this);
+    auto info = new QLabel("DeepSeek · https://api.deepseek.com\n也兼容 DEEPSEEK_API_KEY 环境变量。密钥保存在当前 Windows 用户的凭据管理器中，不写入项目或安装目录。", this);
     info->setWordWrap(true); layout->addWidget(info);
     auto key = new QLineEdit(this); key->setObjectName("api_key_edit"); key->setEchoMode(QLineEdit::Password); key->setMaxLength(2048);
-    key->setPlaceholderText("输入自己的 DeepSeek API Key"); key->setClearButtonEnabled(true); form->addRow("API Key", key);
+    key->setPlaceholderText("输入自己的 DeepSeek API Key"); key->setClearButtonEnabled(true);
+    auto keyRow = new QHBoxLayout;
+    auto save = new QPushButton("安全保存", this); save->setObjectName("save_ai_key");
+    auto test = new QPushButton("测试连接（不保存）", this); test->setObjectName("test_ai_connection");
+    keyRow->addWidget(key, 1); keyRow->addWidget(save); keyRow->addWidget(test);
+    form->addRow("API Key", keyRow);
     auto show = new QCheckBox("显示本次输入的密钥", this); show->setObjectName("show_ai_key"); form->addRow(show);
     layout->addLayout(form);
     auto status = new QLabel(this); status->setObjectName("ai_key_status"); status->setWordWrap(true); status->setTextFormat(Qt::PlainText); layout->addWidget(status);
@@ -30,11 +35,11 @@ AiSettingsDialog::AiSettingsDialog(QWidget* parent, AiCredentialStore store, QNe
         AiCredentialStore::wipe(saved); AiCredentialStore::wipe(value);
     };
     refresh();
-    auto buttons = new QHBoxLayout; auto save = new QPushButton("安全保存", this); save->setObjectName("save_ai_key");
-    auto clear = new QPushButton("清除已保存密钥", this); clear->setObjectName("clear_ai_key");
-    auto test = new QPushButton("测试连接（不保存）", this); test->setObjectName("test_ai_connection");
-    buttons->addWidget(save); buttons->addWidget(clear); buttons->addWidget(test); layout->addLayout(buttons);
-    auto result = new QLabel("测试只请求模型列表，不上传文件内容。清除本机密钥不会删除环境变量。", this);
+    auto buttons = new QHBoxLayout;
+    auto clear = new QPushButton("清除密钥", this); clear->setObjectName("clear_ai_key");
+    auto clearInfo = new QLabel("清除本机密钥不会删除环境变量。", this); clearInfo->setWordWrap(true);
+    buttons->addWidget(clear); buttons->addWidget(clearInfo, 1); layout->addLayout(buttons);
+    auto result = new QLabel(this);
     result->setObjectName("ai_connection_result"); result->setTextFormat(Qt::PlainText); result->setWordWrap(true); layout->addWidget(result);
     auto close = new QDialogButtonBox(QDialogButtonBox::Close, this); layout->addWidget(close);
     close->button(QDialogButtonBox::Close)->setText("关闭");

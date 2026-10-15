@@ -420,9 +420,7 @@ MainWindow::MainWindow(QString username, QWidget *parent)
     setup_integrated_tools();
     auto aiAction = menuBar()->addAction("DeepSeek 辅助");
     connect(aiAction, &QAction::triggered, this, &MainWindow::open_ai_tools);
-    auto aiSettingsAction = menuBar()->addAction("AI 服务设置");
-    aiSettingsAction->setObjectName("ai_settings_action");
-    connect(aiSettingsAction, &QAction::triggered, this, &MainWindow::open_ai_settings);
+
 
     QHeaderView *header = ui->tree_dir->header();
 
@@ -1740,6 +1738,7 @@ void MainWindow::refresh_tree()
     auto separator = new QTreeWidgetItem(ui->tree_dir);
     separator->setData(0, Qt::UserRole + 1, 99);
     separator->setFlags(Qt::NoItemFlags);
+    separator->setFirstColumnSpanned(true);
     QTreeWidgetItem* rootItem =
         new QTreeWidgetItem(ui->tree_dir);
 
@@ -3011,6 +3010,7 @@ void MainWindow::on_tree_dir_itemClicked(
     // ==================================================
     // 隐私文件
     // ==================================================
+    if (itemType == 99) return; // Decorative separator never navigates.
     if (itemType == 2)
     {
         // 尚未获得隐私权限时，验证密码

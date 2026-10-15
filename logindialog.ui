@@ -2,121 +2,45 @@
 <ui version="4.0">
  <class>LoginDialog</class>
  <widget class="QDialog" name="LoginDialog">
-  <property name="geometry">
-   <rect>
-    <x>0</x>
-    <y>0</y>
-    <width>400</width>
-    <height>300</height>
-   </rect>
-  </property>
-  <property name="windowTitle">
-   <string>Dialog</string>
-  </property>
-  <widget class="QPushButton" name="btn_filemanage">
-   <property name="geometry">
-    <rect>
-     <x>150</x>
-     <y>70</y>
-     <width>111</width>
-     <height>18</height>
-    </rect>
-   </property>
-   <property name="text">
-    <string>文件管理系统</string>
-   </property>
-  </widget>
-  <widget class="QPushButton" name="btn_modify_privacy">
-   <property name="geometry">
-    <rect>
-     <x>220</x>
-     <y>190</y>
-     <width>60</width>
-     <height>18</height>
-    </rect>
-   </property>
-   <property name="text">
-    <string>修改隐私密码</string>
-   </property>
-  </widget>
-  <widget class="QWidget" name="layoutWidget">
-   <property name="geometry">
-    <rect>
-     <x>110</x>
-     <y>140</y>
-     <width>176</width>
-     <height>26</height>
-    </rect>
-   </property>
-   <layout class="QHBoxLayout" name="horizontalLayout_2">
-    <item>
-     <widget class="QPushButton" name="btn_password">
-      <property name="text">
-       <string>密码</string>
-      </property>
-     </widget>
-    </item>
-    <item>
-     <widget class="QLineEdit" name="lineEdit_pass">
-      <property name="echoMode">
-       <enum>QLineEdit::EchoMode::Password</enum>
-      </property>
-     </widget>
-    </item>
-   </layout>
-  </widget>
-  <widget class="QWidget" name="layoutWidget">
-   <property name="geometry">
-    <rect>
-     <x>110</x>
-     <y>110</y>
-     <width>176</width>
-     <height>26</height>
-    </rect>
-   </property>
-   <layout class="QHBoxLayout" name="horizontalLayout">
-    <item>
-     <widget class="QPushButton" name="btn_account">
-      <property name="text">
-       <string>账号</string>
-      </property>
-     </widget>
-    </item>
-    <item>
-     <widget class="QLineEdit" name="lineEdit_user"/>
-    </item>
-   </layout>
-  </widget>
-  <widget class="QWidget" name="layoutWidget">
-   <property name="geometry">
-    <rect>
-     <x>160</x>
-     <y>170</y>
-     <width>158</width>
-     <height>26</height>
-    </rect>
-   </property>
-   <layout class="QHBoxLayout" name="horizontalLayout_3">
-    <item>
-     <widget class="QPushButton" name="btn_login">
-      <property name="text">
-       <string>登录</string>
-      </property>
-      <property name="default">
-       <bool>true</bool>
-      </property>
-     </widget>
-    </item>
-    <item>
-     <widget class="QPushButton" name="btn_register">
-      <property name="text">
-       <string>注册</string>
-      </property>
-     </widget>
-    </item>
-   </layout>
-  </widget>
+  <property name="geometry"><rect><x>0</x><y>0</y><width>440</width><height>320</height></rect></property>
+  <property name="minimumSize"><size><width>400</width><height>300</height></size></property>
+  <property name="windowTitle"><string>文件管理系统</string></property>
+  <layout class="QVBoxLayout" name="loginLayout">
+   <property name="leftMargin"><number>28</number></property>
+   <property name="topMargin"><number>24</number></property>
+   <property name="rightMargin"><number>28</number></property>
+   <property name="bottomMargin"><number>20</number></property>
+   <property name="spacing"><number>14</number></property>
+   <item><spacer name="topSpacer"><property name="orientation"><enum>Qt::Vertical</enum></property><property name="sizeHint" stdset="0"><size><width>20</width><height>12</height></size></property></spacer></item>
+   <item alignment="Qt::AlignHCenter">
+    <widget class="QPushButton" name="btn_filemanage">
+     <property name="minimumSize"><size><width>200</width><height>44</height></size></property>
+     <property name="text"><string>文件管理系统</string></property>
+     <property name="focusPolicy"><enum>Qt::NoFocus</enum></property>
+    </widget>
+   </item>
+   <item>
+    <layout class="QFormLayout" name="credentialsLayout">
+     <property name="horizontalSpacing"><number>12</number></property>
+     <property name="verticalSpacing"><number>12</number></property>
+     <item row="0" column="0"><widget class="QPushButton" name="btn_account"><property name="text"><string>账号</string></property></widget></item>
+     <item row="0" column="1"><widget class="QLineEdit" name="lineEdit_user"/></item>
+     <item row="1" column="0"><widget class="QPushButton" name="btn_password"><property name="text"><string>密码</string></property></widget></item>
+     <item row="1" column="1"><widget class="QLineEdit" name="lineEdit_pass"><property name="echoMode"><enum>QLineEdit::Password</enum></property></widget></item>
+    </layout>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="actionsLayout">
+     <item><spacer name="actionsSpacer"><property name="orientation"><enum>Qt::Horizontal</enum></property><property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property></spacer></item>
+     <item><widget class="QPushButton" name="btn_login"><property name="minimumSize"><size><width>80</width><height>34</height></size></property><property name="text"><string>登录</string></property><property name="default"><bool>true</bool></property></widget></item>
+     <item><widget class="QPushButton" name="btn_register"><property name="minimumSize"><size><width>80</width><height>34</height></size></property><property name="text"><string>注册</string></property></widget></item>
+    </layout>
+   </item>
+   <item><spacer name="bottomSpacer"><property name="orientation"><enum>Qt::Vertical</enum></property><property name="sizeHint" stdset="0"><size><width>20</width><height>12</height></size></property></spacer></item>
+   <item alignment="Qt::AlignRight"><widget class="QPushButton" name="btn_modify_privacy"><property name="minimumSize"><size><width>136</width><height>36</height></size></property><property name="text"><string>修改隐私密码</string></property></widget></item>
+  </layout>
  </widget>
+ <tabstops><tabstop>lineEdit_user</tabstop><tabstop>lineEdit_pass</tabstop><tabstop>btn_login</tabstop><tabstop>btn_register</tabstop><tabstop>btn_modify_privacy</tabstop></tabstops>
  <resources/>
  <connections/>
 </ui>

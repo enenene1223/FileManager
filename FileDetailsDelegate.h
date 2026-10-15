@@ -70,7 +70,8 @@ public:
     using QStyledItemDelegate::QStyledItemDelegate;
     void paint(QPainter* painter, const QStyleOptionViewItem& option, const QModelIndex& index) const override {
         if (index.data(Qt::UserRole + 1).toInt() != 99) { QStyledItemDelegate::paint(painter, option, index); return; }
-        painter->save(); painter->setPen(QColor("#dbe3ec"));
+        painter->save(); painter->fillRect(option.rect, option.palette.brush(QPalette::Base));
+        painter->setPen(QColor("#dbe3ec"));
         painter->drawLine(option.rect.left() + 8, option.rect.bottom() - 5, option.rect.right() - 8, option.rect.bottom() - 5); painter->restore();
     }
     QSize sizeHint(const QStyleOptionViewItem& option, const QModelIndex& index) const override {
