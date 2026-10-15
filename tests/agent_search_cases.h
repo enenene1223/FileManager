@@ -1,5 +1,6 @@
 #pragma once
 #include "AiSearchAgent.h"
+#include "AiChatError.h"
 #include <QJsonDocument>
 #include <QEventLoop>
 
@@ -67,10 +68,14 @@ static void agentSearchCases() {
     check(!failed && chosen == selection && network.requests.size() == 2, "agent independently queries then selects one verified latest file");
     check(agent.executeTool("finish_search", {{"summary", "fake"}, {"files", QJsonArray{QJsonObject{{"id", "fabricated"}, {"reason", "guess"}}}}}).contains("error"), "fabricated final id rejected");
     // A malformed or failed request cannot alter filesystem/UI; no raw errors are exposed.
-    for (int status : {401, 429, 500}) {
+    for (int status : {400, 401, 402, 429, 500}) {
         AgentNetwork broken; broken.status = status; AiSearchAgent instance(snapshot, &broken);
         done = false; failed = false;
-        instance.failed = [&](QString text) { check(!text.contains("test-agent-only"), "agent error redacts key"); done = failed = true; };
+        instance.failed = [&](QString text) {
+            check(!text.contains("test-agent-only"), "agent error redacts key");
+            check(text.contains(status == 401 ? "认证" : status == 402 ? "余额" : status == 429 ? "限流" : status == 500 ? "服务端异常" : "HTTP 400"), "HTTP errors classified distinctly");
+            done = failed = true;
+        };
         instance.start("查找文件", "test-agent-only", "deepseek-chat"); wait(); check(failed, "HTTP failure surfaces safely");
     }
     AgentNetwork invalid; invalid.malformed = true; AiSearchAgent bad(snapshot, &invalid);
@@ -87,7 +92,13 @@ static void agentSearchCases() {
     AgentNetwork oversized; oversized.rawOverride = QByteArray(140000, 'x'); AiSearchAgent large(snapshot, &oversized);
     done = false; large.failed = [&](QString) { done = true; }; large.start("查找文件", "test-agent-only", "deepseek-chat"); wait();
     AgentNetwork timeout; timeout.status = 0; timeout.failure = QNetworkReply::TimeoutError; AiSearchAgent timed(snapshot, &timeout);
-    done = false; timed.failed = [&](QString) { done = true; }; timed.start("查找文件", "test-agent-only", "deepseek-chat"); wait();
+    done = false; timed.failed = [&](QString text) { check(text.contains("超时"), "timeout distinguished from HTTP errors"); done = true; }; timed.start("查找文件", "test-agent-only", "deepseek-chat"); wait();
+    AgentNetwork offline; offline.status = 0; offline.failure = QNetworkReply::HostNotFoundError; AiSearchAgent disconnected(snapshot, &offline);
+    done = false; disconnected.failed = [&](QString text) { check(text.contains("网络连接失败"), "network errors distinguished from service errors"); done = true; };
+    disconnected.start("查找文件", "test-agent-only", "deepseek-chat"); wait();
+    check(ai_chat_error(0, QNetworkReply::OperationCanceledError, true).contains("超时"), "hard deadline distinguished from user cancellation");
+    check(ai_chat_error(0, QNetworkReply::OperationCanceledError).contains("取消"), "user cancellation classified");
+    check(ai_chat_error(200, QNetworkReply::NoError).isEmpty(), "successful requests unaffected");
     AgentNetwork cancelled; AiSearchAgent cancel(snapshot, &cancelled); bool callback = false;
     cancel.failed = [&](QString) { callback = true; }; cancel.completed = [&](QString, QJsonArray) { callback = true; };
     cancel.start("查找文件", "test-agent-only", "deepseek-chat"); cancel.cancel();

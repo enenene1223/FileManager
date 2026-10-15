@@ -166,7 +166,7 @@ void MainWindow::setup_integrated_tools()
     });
 
     auto options = new QMenu(search_options_button_); search_options_button_->setMenu(options);
-    auto changed = [this] { if (search_mode_) run_smart_search(); };
+    auto changed = [this] { run_smart_search(); };
     auto range = options->addMenu("范围"); auto rangeGroup = new QActionGroup(range);
     for (int i = 0; i < 2; ++i) {
         auto action = range->addAction(i ? "整个文件系统" : "当前目录及子目录"); action->setCheckable(true); action->setChecked(i == 0); rangeGroup->addAction(action);
@@ -363,7 +363,8 @@ void MainWindow::run_smart_search()
     }
     if (rename_click_timer) rename_click_timer->stop(); last_clicked_item = nullptr;
     if (recycle_mode) { ui->statusbar->showMessage("请在普通目录中搜索", 3000); return; }
-    if (ui->lineEdit_search->text().trimmed().isEmpty()) { refresh_file_list(); return; }
+    const bool hasFilters = search_global_ || search_type_ != 0 || !search_after_.isEmpty() || !search_before_.isEmpty() || !search_min_.isEmpty() || !search_max_.isEmpty();
+    if (ui->lineEdit_search->text().trimmed().isEmpty() && !hasFilters) { refresh_file_list(); return; }
     search_mode_ = true; search_options_button_->show();
     auto results = search_hits(true); QSignalBlocker blocker(ui->list_files); ui->list_files->clear();
     const auto query = LocalSearch::parse(ui->lineEdit_search->text()); int expandedCount = 0;

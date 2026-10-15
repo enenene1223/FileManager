@@ -166,6 +166,37 @@ static void aiClassificationChoices(MainWindow& window) {
     check(fs->get_path(source) == path && window.undo_stack.size() == undoCount && conflict, "rejected recommendations preserve file and undo");
     window.navigate_to("/");
 }
+static void filterOnlySearch(MainWindow& window) {
+    auto fs = window.file_system; auto folder = fs->create_folder(fs->get_root(), "仅筛选回归");
+    auto nested = fs->create_folder(folder, "子目录");
+    auto old = fs->create_file(folder, "旧文件.txt", "a"); auto recent = fs->create_file(nested, "新文件.txt", "abcdef");
+    fs->set_metadata(old, 1, "2020-01-01 10:00:00", "2020-01-01 10:00:00");
+    fs->set_metadata(recent, 6, "2025-02-03 10:00:00", "2025-02-03 10:00:00");
+    auto locked = fs->create_folder(folder, "锁定"); fs->set_locked(locked, true);
+    auto secret = fs->create_file(locked, "秘密.txt", "abcdef"); fs->set_metadata(secret, 6, "2025-02-03 10:00:00", "2025-02-03 10:00:00");
+    window.search_global_ = false; window.search_type_ = 0; window.search_body_ = false;
+    window.search_after_.clear(); window.search_before_.clear(); window.search_min_.clear(); window.search_max_.clear();
+    window.ui->lineEdit_search->clear(); window.navigate_to("/仅筛选回归");
+    auto dateLow = window.findChild<QLineEdit*>("search_date_after"), dateHigh = window.findChild<QLineEdit*>("search_date_before");
+    dateLow->setText("2025-01-01"); dateHigh->setText("2025-12-31");
+    check(!window.search_mode_, "filter-only starts from ordinary view");
+    window.findChild<QPushButton*>("apply_search_date")->click();
+    check(window.search_mode_ && window.ui->list_files->count() == 1 && window.ui->list_files->item(0)->data(Qt::UserRole).value<FileNode*>() == recent,
+          "empty keyword date-only filter starts search and finds descendants without exposing private files");
+    dateLow->setText("2099-01-01"); dateHigh->clear(); window.findChild<QPushButton*>("apply_search_date")->click();
+    check(window.ui->list_files->count() == 0 && window.search_mode_, "empty keyword date filter can return zero results");
+    window.search_after_.clear(); window.search_before_.clear(); window.navigate_to("/仅筛选回归");
+    auto types = window.search_options_button_->menu()->actions()[2]->menu()->actions();
+    types[2]->trigger(); check(window.search_mode_ && window.ui->list_files->count() == 2, "empty keyword TXT-only filter starts from ordinary view");
+    types[1]->trigger(); check(window.ui->list_files->count() == 1 && window.ui->list_files->item(0)->data(Qt::UserRole).value<FileNode*>() == nested, "directory-only excludes private directory");
+    types[0]->trigger(); check(!window.search_mode_, "clearing all constraints restores ordinary view");
+    auto min = window.findChild<QLineEdit*>("search_size_min"), max = window.findChild<QLineEdit*>("search_size_max");
+    min->setText("2"); max->setText("10"); window.findChild<QPushButton*>("apply_search_size")->click();
+    QSet<FileNode*> rows; for (int i = 0; i < window.ui->list_files->count(); ++i) rows.insert(window.ui->list_files->item(i)->data(Qt::UserRole).value<FileNode*>());
+    check(window.search_mode_ && rows.contains(recent) && !rows.contains(old) && !rows.contains(secret), "empty keyword size-only filter respects bounds and privacy");
+    types[2]->trigger(); check(window.ui->list_files->count() == 1, "empty keyword combined size/type filters");
+    window.search_type_ = 0; window.search_min_.clear(); window.search_max_.clear(); window.ui->lineEdit_search->clear(); window.navigate_to("/");
+}
 static void run() {
     MainWindow window("acceptance"); window.show(); QApplication::processEvents();
     window.ai_credentials_ = AiCredentialStore("FileManager/Tests/MissingKey/" + QUuid::createUuid().toString(QUuid::WithoutBraces));
@@ -304,6 +335,7 @@ static void run() {
     semanticSearch(window);
     readonlyAgentResults(window);
     aiClassificationChoices(window);
+    filterOnlySearch(window);
     qunsetenv("DEEPSEEK_API_KEY");
     QTimer::singleShot(50, [] { auto dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget()); for (auto button : dialog->findChildren<QPushButton*>()) if (button->objectName() == "send_ai_task") button->click(); bool fallback = false; for (auto text : dialog->findChildren<QPlainTextEdit*>()) fallback |= text->toPlainText().contains("未配置"); check(fallback, "missing AI key fallback"); dialog->accept(); });
     window.open_ai_tools();

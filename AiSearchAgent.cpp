@@ -1,5 +1,6 @@
 #include "AiSearchAgent.h"
 #include "AiCredentialStore.h"
+#include "AiChatError.h"
 #include "LocalSearchTerms.h"
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
@@ -150,7 +151,7 @@ void AiSearchAgent::request() {
     response_.clear(); oversized_ = false;
     auto reply = network_->post(req, QJsonDocument(body).toJson(QJsonDocument::Compact)); reply_ = reply;
     auto timer = new QTimer(reply); timer->setSingleShot(true); timer->start(20000);
-    connect(timer, &QTimer::timeout, reply, [reply] { reply->abort(); });
+    connect(timer, &QTimer::timeout, reply, [reply] { reply->setProperty("ai_deadline_expired", true); reply->abort(); });
     connect(reply, &QNetworkReply::readyRead, this, [this, reply] {
         const auto bytes = reply->readAll();
         if (response_.size() + bytes.size() > 131072) { oversized_ = true; reply->abort(); return; }
@@ -161,11 +162,8 @@ void AiSearchAgent::request() {
         if (!running_) return;
         const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         if (oversized_) { fail("AI 响应过大，已停止搜索。请缩小范围。"); return; }
-        if (reply->error() != QNetworkReply::NoError || status != 200) {
-            fail(status == 401 || status == 403 ? "AI 认证失败，请检查密钥。离线搜索不受影响。"
-                : status == 429 ? "AI 服务限流，请稍后重试。离线搜索不受影响。"
-                : "AI 请求失败或超时，请检查网络、余额与模型配置。离线搜索不受影响。"); return;
-        }
+        const auto failure = ai_chat_error(status, reply->error(), reply->property("ai_deadline_expired").toBool());
+        if (!failure.isEmpty()) { fail(failure); return; }
         const auto tail = reply->readAll(); if (response_.size() + tail.size() > 131072) { fail("AI 响应过大。"); return; }
         response_ += tail;
         const auto choices = QJsonDocument::fromJson(response_).object().value("choices").toArray();

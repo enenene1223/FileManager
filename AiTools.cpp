@@ -18,6 +18,7 @@
 #include <QScopeGuard>
 #include "AiSettingsDialog.h"
 #include "AiSearchAgent.h"
+#include "AiChatError.h"
 
 void MainWindow::open_ai_settings() {
     AiSettingsDialog settings(this, ai_credentials_); settings.exec();
@@ -126,17 +127,23 @@ void MainWindow::open_ai_tools()
         request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
         request.setRawHeader("Authorization", "Bearer " + key);
         request.setTransferTimeout(20000);
+        request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
         QJsonObject body{{"model", QString::fromUtf8(qgetenv("DEEPSEEK_MODEL").isEmpty() ? QByteArray("deepseek-chat") : qgetenv("DEEPSEEK_MODEL"))}, {"stream", false}, {"max_tokens", 1000}, {"temperature", 0.2},
             {"messages", QJsonArray{QJsonObject{{"role", "system"}, {"content", system}}, QJsonObject{{"role", "user"}, {"content", payload}}}}};
         if (operation != 2) body["response_format"] = QJsonObject{{"type", "json_object"}};
         auto reply = manager->post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
+        auto deadline = new QTimer(reply); deadline->setSingleShot(true); deadline->start(20000);
+        connect(deadline, &QTimer::timeout, reply, [reply] { reply->setProperty("ai_deadline_expired", true); reply->abort(); });
         send->setEnabled(false); output->setPlainText("请求中…最多等待20秒，可关闭窗口取消。");
         connect(&dialog, &QDialog::finished, reply, [reply] { reply->abort(); });
-        connect(reply, &QNetworkReply::finished, &dialog, [&, reply, operation, node, candidates] {
-            send->setEnabled(true);
-            auto bytes = reply->readAll(); auto error = reply->error(); reply->deleteLater();
-            if (error != QNetworkReply::NoError) { output->setPlainText("AI 请求失败或超时。本地功能仍可使用。请检查网络、密钥、余额及模型配置。"); return; }
-            auto choices = QJsonDocument::fromJson(bytes).object().value("choices").toArray();
+        connect(reply, &QNetworkReply::finished, &dialog, [&, reply, deadline, operation, node, candidates] {
+            deadline->stop(); send->setEnabled(true);
+            const auto failure = ai_chat_error(reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt(), reply->error(), reply->property("ai_deadline_expired").toBool());
+            auto bytes = reply->readAll(); reply->deleteLater();
+            if (!failure.isEmpty()) { output->setPlainText(failure); return; }
+            QJsonParseError parseError; const auto response = QJsonDocument::fromJson(bytes, &parseError);
+            if (parseError.error != QJsonParseError::NoError || !response.isObject()) { output->setPlainText("AI 服务返回格式异常，请稍后重试。本地功能仍可使用。"); return; }
+            auto choices = response.object().value("choices").toArray();
             auto text = choices.isEmpty() ? QString() : choices[0].toObject().value("message").toObject().value("content").toString();
             if (text.isEmpty()) { output->setPlainText("AI 返回空内容，请使用本地功能。"); return; }
             if (operation == 2) { output->setPlainText(text.left(10000)); return; }
