@@ -106,8 +106,9 @@ static void readonlyAgentResults(MainWindow& window) {
     QString id;
     for (auto it = handles.begin(); it != handles.end(); ++it) if (it.value() == newer) id = it.key();
     const QJsonArray selection{QJsonObject{{"id", id}, {"reason", "创建时间更晚，修改时间不是判断依据"}}};
-    const auto undoCount = window.undo_stack.size(); window.navigate_to("/Agent回归");
+    const auto undoCount = window.undo_stack.size(); window.navigate_to("/Agent回归"); window.ui->lineEdit_search->setText("旧关键词");
     check(window.show_agent_search_results(snapshot, handles, selection, "找最新创建的点名册", "点名册1创建更晚"), "agent result accepted after live validation");
+    check(window.ui->lineEdit_search->text().isEmpty(), "AI task does not populate ordinary search field");
     check(window.ui->list_files->count() == 1 && window.ui->list_files->item(0)->data(Qt::UserRole).value<FileNode*>() == newer, "agent can display one selected result rather than all keyword matches");
     check(window.ui->list_files->item(0)->toolTip().contains("创建时间更晚") && window.undo_stack.size() == undoCount && fs->get_path(newer) == "/Agent回归/点名册1.txt", "agent explains without mutating or adding undo entries");
     window.on_list_files_itemDoubleClicked(window.ui->list_files->item(0));
@@ -119,6 +120,51 @@ static void readonlyAgentResults(MainWindow& window) {
     window.ui->lineEdit_search->setText("点名册"); window.run_smart_search();
     check(window.ui->list_files->count() == 2, "ordinary offline search remains usable after agent results");
     window.ui->lineEdit_search->clear(); window.navigate_to("/");
+}
+static void aiClassificationChoices(MainWindow& window) {
+    auto fs = window.file_system; auto folder = fs->create_folder(fs->get_root(), "AI归类回归");
+    auto source = fs->create_file(folder, "周五讨论.txt", "角色技能平衡与关卡设计讨论");
+    auto games = fs->create_folder(folder, "游戏"); auto study = fs->create_folder(folder, "学习"); auto work = fs->create_folder(folder, "工作");
+    auto fourth = fs->create_folder(folder, "其他");
+    QMap<QString, FileNode*> candidates;
+    for (auto target : {games, study, work, fourth}) candidates[QString::fromStdString(fs->get_path(target))] = target;
+    candidates["/捏造路径"] = games;
+    auto item = [&](FileNode* target, const QString& reason) { return QJsonObject{{"path", QString::fromStdString(fs->get_path(target))}, {"reason", reason}}; };
+    QJsonObject recommendation{{"recommendations", QJsonArray{
+        QJsonObject{{"path", "/捏造路径"}, {"reason", "无效路径"}}, item(games, "正文提到角色技能与关卡设计，与游戏目录相关"),
+        item(games, "重复项"), item(study, "如果作为课程讨论记录，可归入学习"), item(work, "如果作为项目会议记录，可归入工作"), item(fourth, "多余候选")}}};
+    const auto path = fs->get_path(source); const auto undoCount = window.undo_stack.size();
+    QTimer::singleShot(50, [] {
+        auto dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget()); check(dialog && dialog->objectName() == "ai_classification_choices", "AI offers separate choices dialog");
+        auto list = dialog->findChild<QListWidget*>("ai_classification_targets");
+        auto confirm = dialog->findChild<QPushButton*>("confirm_ai_classification");
+        check(list->count() == 3 && list->item(0)->text().contains("角色技能") && !confirm->isEnabled(), "three unique validated recommendations with concrete reasons and explicit selection");
+        list->setCurrentRow(1); check(confirm->isEnabled(), "selection enables explicit move"); dialog->reject();
+    });
+    check(window.choose_ai_classification(source, candidates, recommendation, &window).contains("取消"), "cancel status");
+    check(fs->get_path(source) == path && window.undo_stack.size() == undoCount, "cancel does not move or add undo");
+    QTimer::singleShot(50, [] {
+        auto dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget()); auto list = dialog->findChild<QListWidget*>("ai_classification_targets");
+        list->setCurrentRow(1); dialog->findChild<QPushButton*>("confirm_ai_classification")->click();
+    });
+    check(window.choose_ai_classification(source, candidates, recommendation, &window).contains("已移动并保存"), "selected AI choice moves and persists");
+    check(source->get_parent() == study && window.undo_stack.size() == undoCount + 1, "human can choose second AI recommendation");
+    window.on_btn_undo_clicked(); check(fs->get_path(source) == path && window.undo_stack.size() == undoCount, "AI recommendation move supports existing undo");
+    QJsonObject none{{"recommendations", QJsonArray{}}, {"reason", "无法确定合适位置"}};
+    check(window.choose_ai_classification(source, candidates, none, &window).contains("没有合适"), "AI may decline to recommend");
+    check(window.choose_ai_classification(source, candidates, QJsonObject{{"path", "bad"}}, &window).contains("格式无效"), "malformed response cannot move");
+    auto conflict = fs->create_file(games, source->get_name(), "");
+    QJsonObject single{{"recommendations", QJsonArray{item(games, "角色技能讨论")}}};
+    check(window.choose_ai_classification(source, candidates, single, &window).contains("没有合适"), "name conflict rejects destination");
+    QJsonObject chooseWork{{"recommendations", QJsonArray{item(work, "项目讨论")}}};
+    QTimer::singleShot(50, [&] {
+        auto dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget()); auto list = dialog->findChild<QListWidget*>("ai_classification_targets");
+        list->setCurrentRow(0); fs->set_locked(work, true); dialog->findChild<QPushButton*>("confirm_ai_classification")->click();
+    });
+    check(window.choose_ai_classification(source, candidates, chooseWork, &window).contains("权限已变化"), "privacy changed while selecting rejects move");
+    fs->set_locked(work, false);
+    check(fs->get_path(source) == path && window.undo_stack.size() == undoCount && conflict, "rejected recommendations preserve file and undo");
+    window.navigate_to("/");
 }
 static void run() {
     MainWindow window("acceptance"); window.show(); QApplication::processEvents();
@@ -257,6 +303,7 @@ static void run() {
     window.grab().save("navigation-and-header.png");
     semanticSearch(window);
     readonlyAgentResults(window);
+    aiClassificationChoices(window);
     qunsetenv("DEEPSEEK_API_KEY");
     QTimer::singleShot(50, [] { auto dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget()); for (auto button : dialog->findChildren<QPushButton*>()) if (button->objectName() == "send_ai_task") button->click(); bool fallback = false; for (auto text : dialog->findChildren<QPlainTextEdit*>()) fallback |= text->toPlainText().contains("未配置"); check(fallback, "missing AI key fallback"); dialog->accept(); });
     window.open_ai_tools();

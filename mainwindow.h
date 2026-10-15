@@ -18,6 +18,7 @@
 #include <QHeaderView>
 #include <QPushButton>
 #include <QHash>
+#include <QMap>
 #include <QSet>
 #include <QStackedWidget>
 #include "AiCredentialStore.h"
@@ -114,6 +115,8 @@ private:
     bool show_agent_search_results(const QJsonArray& snapshot, const QHash<QString, FileNode*>& handles,
                                   const QJsonArray& selected, const QString& question, const QString& summary);
     void open_ai_settings();
+    QString choose_ai_classification(FileNode* node, const QMap<QString, FileNode*>& candidates,
+                                     const QJsonObject& recommendation, QWidget* parent);
     AiCredentialStore ai_credentials_;
     QJsonObject ai_search_conditions_;
     Ui::MainWindow *ui;
