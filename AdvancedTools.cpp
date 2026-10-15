@@ -1,6 +1,7 @@
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
 #include "FileDetailsDelegate.h"
+#include "LocalSearchTerms.h"
 #include <QStandardItemModel>
 #include <QMenu>
 #include <QActionGroup>
@@ -294,14 +295,39 @@ QList<QPair<FileNode*, int>> MainWindow::search_hits(bool indexed) const
     }
     if (indexed) nodes = search_index_nodes_;
     else file_system->traverse(start, [&](FileNode* n) { if (n != start && can_access_node(n)) nodes.append(n); });
-    auto tokens = ui->lineEdit_search->text().trimmed().split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
+    const auto tokens = LocalSearch::parse(ui->lineEdit_search->text());
     QSet<FileNode*> candidates; bool restricted = false;
-    if (indexed && !search_body_) for (auto token : tokens) {
-        token = token.toCaseFolded();
-        for (int i = 0; i + 1 < token.size(); ++i) {
-            auto posting = search_name_index_.value(token.mid(i, 2));
-            if (!restricted) { candidates = posting; restricted = true; } else candidates.intersect(posting);
+    // OR aliases inside a group, AND compound parts and separate input tokens.
+    // Intersect bigrams only within a single spelling; otherwise aliases disappear.
+    auto postingFor = [this](const QString& text) {
+        QSet<FileNode*> posting; bool first = true;
+        const auto term = text.toCaseFolded();
+        for (qsizetype i = 0; i + 1 < term.size(); ++i) {
+            auto part = search_name_index_.value(term.mid(i, 2));
+            if (first) { posting = part; first = false; } else posting.intersect(part);
         }
+        return posting;
+    };
+    if (indexed && !search_body_) for (const auto& token : tokens) {
+        if (token.original.size() < 2) continue;
+        auto tokenCandidates = postingFor(token.original);
+        if (token.expanded) {
+            QSet<FileNode*> expandedCandidates; bool bounded = false;
+            for (const auto& group : token.groups) {
+                QSet<FileNode*> groupCandidates; bool shortAlternative = false;
+                for (const auto& alternative : group.alternatives) {
+                    if (alternative.size() < 2) { shortAlternative = true; break; }
+                    groupCandidates.unite(postingFor(alternative));
+                }
+                if (shortAlternative) continue;
+                if (!bounded) { expandedCandidates = groupCandidates; bounded = true; }
+                else expandedCandidates.intersect(groupCandidates);
+            }
+            if (!bounded) continue; // A one-character spelling cannot be bounded by bigrams.
+            tokenCandidates.unite(expandedCandidates);
+        }
+        if (!restricted) { candidates = tokenCandidates; restricted = true; }
+        else candidates.intersect(tokenCandidates);
     }
     QList<QPair<FileNode*, int>> hits;
     if (restricted) nodes = candidates.values();
@@ -314,13 +340,10 @@ QList<QPair<FileNode*, int>> MainWindow::search_hits(bool indexed) const
         if ((search_type_ == 1 && !n->is_directory()) || (search_type_ == 2 && (n->is_directory() || !name.endsWith(".txt", Qt::CaseInsensitive)))) continue;
         auto modified = QString::fromStdString(n->get_modified_time()).left(10);
         if (n->get_size() < low || n->get_size() > high || (!search_after_.isEmpty() && modified < search_after_) || (!search_before_.isEmpty() && modified > search_before_)) continue;
-        int score = 1;
-        for (auto token : tokens) {
-            if (name.contains(token, Qt::CaseInsensitive)) score += 100;
-            else if (search_body_ && !n->is_directory() && name.endsWith(".txt", Qt::CaseInsensitive) && QString::fromStdString(n->get_content()).contains(token, Qt::CaseInsensitive)) ++score;
-            else { score = 0; break; }
-        }
-        if (score) hits.append(qMakePair(n, score));
+        const auto body = search_body_ && !n->is_directory() && name.endsWith(".txt", Qt::CaseInsensitive)
+            ? QString::fromStdString(n->get_content()) : QString();
+        const auto match = LocalSearch::match(tokens, name, body);
+        if (match.score) hits.append(qMakePair(n, match.score));
     }
     return hits;
 }
@@ -343,13 +366,23 @@ void MainWindow::run_smart_search()
     if (ui->lineEdit_search->text().trimmed().isEmpty()) { refresh_file_list(); return; }
     search_mode_ = true; search_options_button_->show();
     auto results = search_hits(true); QSignalBlocker blocker(ui->list_files); ui->list_files->clear();
+    const auto query = LocalSearch::parse(ui->lineEdit_search->text()); int expandedCount = 0;
     for (auto hit : results) {
         addToListWidget(hit.first);
         auto item = ui->list_files->item(ui->list_files->count() - 1);
-        item->setData(Qt::UserRole + 5, hit.second); item->setToolTip(QString::fromStdString(file_system->get_path(hit.first)));
+        item->setData(Qt::UserRole + 5, hit.second);
+        const auto name = QString::fromStdString(hit.first->get_name());
+        const auto body = search_body_ && !hit.first->is_directory() && name.endsWith(".txt", Qt::CaseInsensitive)
+            ? QString::fromStdString(hit.first->get_content()) : QString();
+        const auto match = LocalSearch::match(query, name, body);
+        expandedCount += match.expanded;
+        item->setToolTip(QString::fromStdString(file_system->get_path(hit.first)) + "\n" + match.reasons.join('\n'));
         item->setFlags(item->flags() & ~Qt::ItemIsEditable);
     }
-    apply_file_sort(); ui->statusbar->showMessage(QString("找到 %1 个项目").arg(results.size()), 3000);
+    apply_file_sort();
+    ui->statusbar->showMessage(expandedCount
+        ? QString("找到 %1 个项目，其中 %2 个含同义词扩展匹配；悬停结果查看原因").arg(results.size()).arg(expandedCount)
+        : QString("找到 %1 个项目").arg(results.size()), 6000);
 }
 
 void MainWindow::apply_file_sort()

@@ -24,6 +24,64 @@ static void select(MainWindow& w, FileNode* n) {
     for (int i = 0; i < w.ui->list_files->count(); ++i) if (w.ui->list_files->item(i)->data(Qt::UserRole).value<FileNode*>() == n) { w.ui->list_files->setCurrentRow(i); return; }
     check(false, "select node");
 }
+static void semanticSearch(MainWindow& window) {
+    auto fs = window.file_system; auto root = fs->get_root();
+    auto folder = fs->create_folder(root, "语义搜索回归");
+    auto chinese = fs->create_file(folder, "游戏资料.txt", "");
+    auto english = fs->create_file(folder, "games_notes.txt", "");
+    auto gaming = fs->create_file(folder, "gaming.txt", "");
+    auto bodyOnly = fs->create_file(folder, "memo.txt", "games");
+    auto workReport = fs->create_file(folder, "work_report.txt", "");
+    auto report = fs->create_file(folder, "report.txt", "");
+    auto reporter = fs->create_file(folder, "reporter.txt", "");
+    auto unrelated = fs->create_file(folder, "endgames.txt", "");
+    auto literal = fs->create_file(folder, "xyzunique.txt", "");
+    auto hidden = fs->create_folder(folder, "隐藏"); fs->set_locked(hidden, true);
+    auto secret = fs->create_file(hidden, "games秘密.txt", "游戏");
+    window.navigate_to("/语义搜索回归");
+    window.search_global_ = false; window.search_body_ = false; window.search_type_ = 2;
+    window.search_after_.clear(); window.search_before_.clear(); window.search_min_.clear(); window.search_max_.clear();
+    window.file_sort_ = 0; window.sort_descending_ = false;
+    auto query = [&](const QString& text) {
+        window.ui->lineEdit_search->setText(text);
+        const auto indexed = window.search_hits(true), traversed = window.search_hits(false);
+        QMap<FileNode*, int> a, b;
+        for (auto h : indexed) a[h.first] = h.second;
+        for (auto h : traversed) b[h.first] = h.second;
+        check(a == b, "semantic index/DFS result and score parity");
+        check(!a.contains(secret), "semantic aliases never expose locked files");
+        return a;
+    };
+    auto hits = query("游戏");
+    check(hits.size() == 3 && hits.contains(chinese) && hits.contains(english) && hits.contains(gaming), "Chinese finds English game variants");
+    check(hits[chinese] > hits[english] && !hits.contains(bodyOnly) && !hits.contains(unrelated), "literal priority, body off and alias word boundaries");
+    hits = query("GaMeS");
+    check(hits.contains(chinese) && hits.contains(gaming) && hits[english] > hits[chinese], "English finds Chinese; case-insensitive literal priority");
+    hits = query("游戏 笔记"); check(hits.size() == 1 && hits.contains(english), "multiple semantic terms retain AND");
+    hits = query("工作报告"); check(hits.size() == 1 && hits.contains(workReport), "Chinese compound matches work_report");
+    hits = query("工作报告不存在"); check(hits.isEmpty(), "unknown compound suffix is not discarded");
+    hits = query("报告"); check(hits.size() == 2 && hits.contains(report) && hits.contains(workReport) && !hits.contains(reporter), "report does not expand to reporter");
+    hits = query("xyzunique"); check(hits.size() == 1 && hits.contains(literal), "unknown keywords retain literal matching");
+    hits = query("游"); check(hits.size() == 1 && hits.contains(chinese), "single-character fallback retains parity");
+    window.search_body_ = true; hits = query("游戏");
+    check(hits.size() == 4 && hits.contains(bodyOnly) && hits[english] > hits[bodyOnly], "optional body aliases and name priority");
+    window.search_body_ = false;
+    window.search_global_ = true; hits = query("游戏");
+    check(hits.contains(fs->find_by_path("/game.txt")), "global aliases include other directories");
+    window.search_global_ = false;
+    window.search_type_ = 1; check(query("游戏").isEmpty(), "semantic type filter"); window.search_type_ = 2;
+    window.search_after_ = "2099-01-01"; check(query("游戏").isEmpty(), "semantic date filter"); window.search_after_.clear();
+    window.search_min_ = "1"; check(query("游戏").isEmpty(), "semantic size filter excludes empty files"); window.search_min_.clear();
+    window.ui->lineEdit_search->setText("游戏"); window.run_smart_search();
+    check(window.ui->list_files->item(0)->data(Qt::UserRole).value<FileNode*>() == chinese, "UI ranks direct name before alias names");
+    bool explained = false;
+    for (int i = 0; i < window.ui->list_files->count(); ++i) {
+        auto row = window.ui->list_files->item(i);
+        if (row->data(Qt::UserRole).value<FileNode*>() == english) explained = row->toolTip().contains("游戏 → games");
+    }
+    check(explained, "tooltip explains alias without disclosing body excerpts");
+    window.ui->lineEdit_search->clear(); window.navigate_to("/");
+}
 static void run() {
     MainWindow window("acceptance"); window.show(); QApplication::processEvents();
     window.ai_credentials_ = AiCredentialStore("FileManager/Tests/MissingKey/" + QUuid::createUuid().toString(QUuid::WithoutBraces));
@@ -159,6 +217,7 @@ static void run() {
     window.navigate_to("/"); window.file_header_->sectionClicked(0); window.file_header_->sectionClicked(0); QApplication::processEvents();
     check(window.file_header_->sortIndicatorSection() == 0 && window.file_header_->sortIndicatorOrder() == Qt::DescendingOrder, "header sort direction toggles");
     window.grab().save("navigation-and-header.png");
+    semanticSearch(window);
     qunsetenv("DEEPSEEK_API_KEY");
     QTimer::singleShot(50, [] { auto dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget()); for (auto button : dialog->findChildren<QPushButton*>()) if (button->text().startsWith("发送")) button->click(); bool fallback = false; for (auto text : dialog->findChildren<QPlainTextEdit*>()) fallback |= text->toPlainText().contains("未配置"); check(fallback, "missing AI key fallback"); dialog->accept(); });
     window.open_ai_tools();
