@@ -1,6 +1,7 @@
 #include "AiCredentialStore.h"
 #include "AiSettingsDialog.h"
 #include "AppTheme.h"
+#include "AiTextSummary.h"
 #include <QApplication>
 #include <QLineEdit>
 #include <QLabel>
@@ -62,6 +63,51 @@ static void waitFor(QPushButton* button) {
     check(button->isEnabled(), "async connection test completes");
 }
 
+static void summaryCases() {
+    const auto empty = AiSummaryInput::prepare("空白.txt", "\n \t");
+    check(empty.excerpt.trimmed().isEmpty(), "blank summary source recognised without request");
+    const auto shortText = AiSummaryInput::prepare("点名记录.txt", "到课3人。");
+    check(shortText.included == shortText.total && shortText.coverage().contains("全文"), "short summary declares full coverage");
+    const auto unicode = AiSummaryInput::prepare("长文.txt", QString::fromUtf8("😀").repeated(12001));
+    check(unicode.total == 12001 && unicode.included == 12000 && unicode.excerpt.toUcs4().size() == 12000
+          && unicode.coverage().contains("后续内容未处理"), "summary Unicode-safe limit and honest partial coverage");
+    QJsonObject result{{"summary", "记录本次到课情况。"}, {"points", QJsonArray{"到课3人"}}, {"keywords", QJsonArray{"点名", "出勤"}}, {"extra", ""}};
+    QString formatted;
+    check(ai_format_summary(shortText, result, &formatted) && formatted.contains("文件：点名记录.txt") && formatted.contains("一句话概括")
+          && formatted.contains("主要内容") && formatted.contains("关键词：点名、出勤") && !formatted.contains("其他明确信息"), "structured summary with source and no forced tasks");
+    result["extra"] = "明确到课人数为3人";
+    check(ai_format_summary(unicode, result, &formatted) && formatted.contains("后续内容未处理") && formatted.contains("其他明确信息"), "partial coverage cannot be hidden by model output");
+    result["points"] = QJsonArray{17};
+    check(!ai_format_summary(shortText, result, &formatted) && formatted.isEmpty(), "invalid summary clears copyable result");
+    result["points"] = QJsonArray{}; result["keywords"] = QJsonArray{}; result["extra"] = "";
+    check(ai_format_summary(shortText, result, &formatted), "minimal short-text summary does not invent extra points");
+    result["summary"] = ""; check(!ai_format_summary(shortText, result, &formatted), "empty AI summary rejected");
+}
+static int summaryLiveSmoke() {
+    AiCredentialStore store; auto key = store.effectiveKey();
+    if (key.isEmpty()) { std::cout << "[SKIP] No key; summary live test not sent.\n"; return 0; }
+    const auto source = AiSummaryInput::prepare("虚构点名记录.txt", "本次课程应到4人，实到3人，1人请假。未提供具体日期和人员姓名。");
+    QNetworkAccessManager network; QNetworkRequest request(QUrl("https://api.deepseek.com/chat/completions"));
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json"); request.setRawHeader("Authorization", "Bearer " + key);
+    request.setTransferTimeout(20000); request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
+    QJsonObject body{{"model", QString::fromUtf8(qgetenv("DEEPSEEK_MODEL").isEmpty() ? QByteArray("deepseek-chat") : qgetenv("DEEPSEEK_MODEL"))},
+        {"stream", false}, {"max_tokens", 1500}, {"temperature", 0.2}, {"response_format", QJsonObject{{"type", "json_object"}}},
+        {"messages", QJsonArray{QJsonObject{{"role", "system"}, {"content", ai_summary_instructions()}},
+            QJsonObject{{"role", "user"}, {"content", "文件名：" + source.name + "\n覆盖范围：" + source.coverage() + "\n正文：\n" + source.excerpt}}}}};
+    auto reply = network.post(request, QJsonDocument(body).toJson(QJsonDocument::Compact)); AiCredentialStore::wipe(key);
+    QEventLoop loop; QTimer timer; timer.setSingleShot(true); timer.start(20000);
+    QObject::connect(&timer, &QTimer::timeout, reply, [reply] { reply->setProperty("timeout", true); reply->abort(); });
+    QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit); loop.exec(); timer.stop();
+    const auto failure = ai_chat_error(reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt(), reply->error(), reply->property("timeout").toBool());
+    if (!failure.isEmpty()) { std::cout << "[FAIL] " << failure.toStdString() << '\n'; return 1; }
+    const auto choices = QJsonDocument::fromJson(reply->readAll()).object().value("choices").toArray();
+    const auto text = choices.isEmpty() ? QString() : choices[0].toObject().value("message").toObject().value("content").toString();
+    QString formatted;
+    if (choices.isEmpty() || choices[0].toObject().value("finish_reason") == "length" || !ai_format_summary(source, QJsonDocument::fromJson(text.toUtf8()).object(), &formatted)) {
+        std::cout << "[FAIL] Live synthetic summary format invalid.\n"; return 1;
+    }
+    std::cout << "[PASS] Live synthetic TXT summary returned valid structure and local coverage notice.\n"; return 0;
+}
 int main(int argc, char** argv) {
     QApplication app(argc, argv);
     auto args = app.arguments();
@@ -71,7 +117,9 @@ int main(int argc, char** argv) {
         AiCredentialStore::wipe(value); return 0;
     }
     QFontDatabase::addApplicationFont("C:/Windows/Fonts/msyh.ttc"); app.setFont(QFont("Microsoft YaHei", 10)); app.setStyleSheet(app_theme());
+    if (args.contains("--summary-live-smoke")) return summaryLiveSmoke();
     if (args.contains("--agent-live-smoke")) return agentLiveSmoke();
+    summaryCases();
     agentSearchCases();
     const QString target = "FileManager/Tests/AiSettings/" + QUuid::createUuid().toString(QUuid::WithoutBraces);
     AiCredentialStore store(target); QString error, source;

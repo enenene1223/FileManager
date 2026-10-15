@@ -7,6 +7,7 @@
 #include <QMessageBox>
 #include <QMenu>
 #include <QDialogButtonBox>
+#include <QComboBox>
 #include <QFontDatabase>
 #include <QPlainTextEdit>
 #include <QFile>
@@ -197,6 +198,30 @@ static void filterOnlySearch(MainWindow& window) {
     types[2]->trigger(); check(window.ui->list_files->count() == 1, "empty keyword combined size/type filters");
     window.search_type_ = 0; window.search_min_.clear(); window.search_max_.clear(); window.ui->lineEdit_search->clear(); window.navigate_to("/");
 }
+static void summaryPreflight(MainWindow& window) {
+    auto fs = window.file_system; auto root = fs->get_root();
+    auto empty = fs->create_file(root, "摘要空白.txt", " \n\t"); window.navigate_to("/"); select(window, empty);
+    const auto undoCount = window.undo_stack.size();
+    QTimer::singleShot(50, [] {
+        auto dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget()); check(dialog, "summary dialog opens");
+        dialog->findChild<QComboBox*>()->setCurrentIndex(2); dialog->findChild<QPushButton*>("send_ai_task")->click();
+        bool blank = false; for (auto output : dialog->findChildren<QPlainTextEdit*>()) blank |= output->toPlainText().contains("未发送请求");
+        check(blank && !dialog->findChild<QPushButton*>("copy_ai_summary")->isEnabled(), "blank TXT rejected before credentials/upload; error not copyable"); dialog->reject();
+    });
+    window.open_ai_tools();
+    const auto access = window.has_privacy_access, show = window.show_privacy_mode;
+    auto secret = fs->create_file(root, "摘要隐私.txt", "PRIVATE_SUMMARY_SENTINEL_20"); fs->set_locked(secret, true);
+    window.has_privacy_access = window.show_privacy_mode = true; window.navigate_to("/"); select(window, secret);
+    QTimer::singleShot(50, [] {
+        auto dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget()); dialog->findChild<QComboBox*>()->setCurrentIndex(2);
+        dialog->findChild<QPushButton*>("send_ai_task")->click(); bool blocked = false;
+        for (auto output : dialog->findChildren<QPlainTextEdit*>()) blocked |= output->toPlainText().contains("禁止上传");
+        check(blocked && !dialog->findChild<QPushButton*>("copy_ai_summary")->isEnabled(), "even locally unlocked private TXT cannot be summarised online"); dialog->reject();
+    });
+    window.open_ai_tools(); window.has_privacy_access = access; window.show_privacy_mode = show;
+    check(window.undo_stack.size() == undoCount && empty->get_content() == " \n\t" && secret->get_content() == "PRIVATE_SUMMARY_SENTINEL_20", "summary preflight leaves files and undo unchanged");
+    window.navigate_to("/");
+}
 static void run() {
     MainWindow window("acceptance"); window.show(); QApplication::processEvents();
     window.ai_credentials_ = AiCredentialStore("FileManager/Tests/MissingKey/" + QUuid::createUuid().toString(QUuid::WithoutBraces));
@@ -336,6 +361,7 @@ static void run() {
     readonlyAgentResults(window);
     aiClassificationChoices(window);
     filterOnlySearch(window);
+    summaryPreflight(window);
     qunsetenv("DEEPSEEK_API_KEY");
     QTimer::singleShot(50, [] { auto dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget()); for (auto button : dialog->findChildren<QPushButton*>()) if (button->objectName() == "send_ai_task") button->click(); bool fallback = false; for (auto text : dialog->findChildren<QPlainTextEdit*>()) fallback |= text->toPlainText().contains("未配置"); check(fallback, "missing AI key fallback"); dialog->accept(); });
     window.open_ai_tools();
