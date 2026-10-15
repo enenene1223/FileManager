@@ -79,3 +79,20 @@ set_tests_properties(core_operations aes_gcm ui_search_classification release_st
     WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/acceptance-data"
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     TIMEOUT 30)
+
+# Only the AI settings layer accesses the Windows credential vault.
+add_library(ai_service_settings STATIC AiCredentialStore.cpp AiSettingsDialog.cpp)
+target_compile_features(ai_service_settings PUBLIC cxx_std_17)
+target_include_directories(ai_service_settings PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(ai_service_settings PUBLIC Qt::Core Qt::Widgets Qt::Network)
+if(WIN32)
+    target_link_libraries(ai_service_settings PRIVATE advapi32)
+endif()
+target_link_libraries(FileManager PRIVATE ai_service_settings)
+target_link_libraries(acceptance_probe PRIVATE ai_service_settings)
+qt_add_executable(ai_settings_regression tests/ai_settings_test.cpp)
+target_link_libraries(ai_settings_regression PRIVATE ai_service_settings)
+add_test(NAME ai_settings_secure_storage COMMAND ai_settings_regression)
+set_tests_properties(ai_settings_secure_storage PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/acceptance-data"
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)

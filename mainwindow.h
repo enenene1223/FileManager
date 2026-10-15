@@ -19,6 +19,7 @@
 #include <QHash>
 #include <QSet>
 #include <QStackedWidget>
+#include "AiCredentialStore.h"
 #include "Operation.h"
 
 QT_BEGIN_NAMESPACE
@@ -108,6 +109,8 @@ private:
     mutable QList<FileNode*> search_index_nodes_;
     mutable QHash<QString, QSet<FileNode*>> search_name_index_;
     void open_ai_tools();
+    void open_ai_settings();
+    AiCredentialStore ai_credentials_;
     QJsonObject ai_search_conditions_;
     Ui::MainWindow *ui;
 

@@ -12,6 +12,12 @@
 #include <QPushButton>
 #include <QLabel>
 #include <QMessageBox>
+#include <QScopeGuard>
+#include "AiSettingsDialog.h"
+
+void MainWindow::open_ai_settings() {
+    AiSettingsDialog settings(this, ai_credentials_); settings.exec();
+}
 
 void MainWindow::open_ai_tools()
 {
@@ -20,15 +26,19 @@ void MainWindow::open_ai_tools()
     auto mode = new QComboBox; mode->addItems({"自然语言搜索", "选中文件归类推荐", "选中 TXT 摘要"});
     auto input = new QPlainTextEdit;
     input->setPlaceholderText("例如：查找最近的学习笔记 TXT 文件。归类或摘要时，请先在主窗口选中文件。");
-    auto description = new QLabel("密钥：DEEPSEEK_API_KEY；模型：deepseek-chat。\n只有点击发送并确认后才上传。加密文件正文禁止上传。AI 失败可继续本地搜索。");
+    auto description = new QLabel("可在“AI 服务设置”中安全保存密钥，也兼容 DEEPSEEK_API_KEY 环境变量。\n只有点击发送并确认后才上传。加密文件正文禁止上传。AI 失败可继续本地搜索。");
     description->setWordWrap(true);
     auto send = new QPushButton("发送给 DeepSeek");
     auto output = new QPlainTextEdit; output->setReadOnly(true);
     layout->addWidget(description); layout->addWidget(mode); layout->addWidget(input); layout->addWidget(send); layout->addWidget(output);
+    auto settingsButton = new QPushButton("AI 服务设置", &dialog); layout->insertWidget(1, settingsButton);
+    connect(settingsButton, &QPushButton::clicked, &dialog, [this, &dialog] { AiSettingsDialog settings(&dialog, ai_credentials_); settings.exec(); });
     auto manager = new QNetworkAccessManager(&dialog);
     connect(send, &QPushButton::clicked, &dialog, [&] {
-        QByteArray key = qgetenv("DEEPSEEK_API_KEY");
-        if (key.isEmpty()) { output->setPlainText("未配置 DEEPSEEK_API_KEY。本地搜索、分类及文件管理仍可使用。"); return; }
+        QString credentialError;
+        QByteArray key = ai_credentials_.effectiveKey(nullptr, &credentialError);
+        auto wipeKey = qScopeGuard([&key] { AiCredentialStore::wipe(key); });
+        if (key.isEmpty()) { output->setPlainText("未配置可用的 AI 密钥，请打开“AI 服务设置”填写。离线功能仍可使用。\n" + credentialError); return; }
         const int operation = mode->currentIndex();
         FileNode* node = nullptr;
         QString payload = input->toPlainText().left(4000);

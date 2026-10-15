@@ -420,6 +420,9 @@ MainWindow::MainWindow(QString username, QWidget *parent)
     setup_integrated_tools();
     auto aiAction = menuBar()->addAction("DeepSeek 辅助");
     connect(aiAction, &QAction::triggered, this, &MainWindow::open_ai_tools);
+    auto aiSettingsAction = menuBar()->addAction("AI 服务设置");
+    aiSettingsAction->setObjectName("ai_settings_action");
+    connect(aiSettingsAction, &QAction::triggered, this, &MainWindow::open_ai_settings);
 
     QHeaderView *header = ui->tree_dir->header();
 

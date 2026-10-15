@@ -14,6 +14,7 @@
 #include <QFocusEvent>
 #include <QMouseEvent>
 #include <QToolButton>
+#include <QUuid>
 #include <iostream>
 #include <cstdlib>
 class AcceptanceProbe {
@@ -25,6 +26,7 @@ static void select(MainWindow& w, FileNode* n) {
 }
 static void run() {
     MainWindow window("acceptance"); window.show(); QApplication::processEvents();
+    window.ai_credentials_ = AiCredentialStore("FileManager/Tests/MissingKey/" + QUuid::createUuid().toString(QUuid::WithoutBraces));
     auto fs = window.file_system; fs->reset();
     auto root = fs->get_root();
     auto work = fs->create_folder(root, "工作文档"); fs->create_folder(root, "工作档案");
