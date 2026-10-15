@@ -11,6 +11,7 @@ qt_add_executable(acceptance_probe
     "${app_source_dir}/PrivacyCrypto.cpp"
     "${app_source_dir}/AdvancedTools.cpp"
     "${app_source_dir}/AiTools.cpp"
+    "${app_source_dir}/AiSearchAgent.cpp"
     "${app_source_dir}/icons.qrc"
     ${FILEMANAGER_AI_SETTINGS_SOURCES}
 )
@@ -30,7 +31,7 @@ add_executable(crypto_regression crypto_test.cpp "${app_source_dir}/PrivacyCrypt
 target_compile_features(crypto_regression PRIVATE cxx_std_17)
 target_link_libraries(crypto_regression PRIVATE OpenSSL::Crypto)
 
-qt_add_executable(ai_settings_regression ai_settings_test.cpp ${FILEMANAGER_AI_SETTINGS_SOURCES})
+qt_add_executable(ai_settings_regression ai_settings_test.cpp "${app_source_dir}/AiSearchAgent.cpp" ${FILEMANAGER_AI_SETTINGS_SOURCES})
 target_compile_features(ai_settings_regression PRIVATE cxx_std_17)
 target_include_directories(ai_settings_regression PRIVATE "${app_source_dir}")
 target_link_libraries(ai_settings_regression PRIVATE Qt::Core Qt::Widgets Qt::Network)

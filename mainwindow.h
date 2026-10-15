@@ -14,6 +14,7 @@
 #include <QTreeWidgetItem>
 #include <QStringList>
 #include <QJsonObject>
+#include <QJsonArray>
 #include <QHeaderView>
 #include <QPushButton>
 #include <QHash>
@@ -109,6 +110,9 @@ private:
     mutable QList<FileNode*> search_index_nodes_;
     mutable QHash<QString, QSet<FileNode*>> search_name_index_;
     void open_ai_tools();
+    QJsonArray agent_search_snapshot(FileNode* scope, QHash<QString, FileNode*>& handles) const;
+    bool show_agent_search_results(const QJsonArray& snapshot, const QHash<QString, FileNode*>& handles,
+                                  const QJsonArray& selected, const QString& question, const QString& summary);
     void open_ai_settings();
     AiCredentialStore ai_credentials_;
     QJsonObject ai_search_conditions_;

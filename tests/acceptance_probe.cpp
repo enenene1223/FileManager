@@ -10,6 +10,7 @@
 #include <QFontDatabase>
 #include <QPlainTextEdit>
 #include <QFile>
+#include <QJsonDocument>
 #include <QElapsedTimer>
 #include <QFocusEvent>
 #include <QMouseEvent>
@@ -80,6 +81,43 @@ static void semanticSearch(MainWindow& window) {
         if (row->data(Qt::UserRole).value<FileNode*>() == english) explained = row->toolTip().contains("游戏 → games");
     }
     check(explained, "tooltip explains alias without disclosing body excerpts");
+    window.ui->lineEdit_search->clear(); window.navigate_to("/");
+}
+static void readonlyAgentResults(MainWindow& window) {
+    auto fs = window.file_system; auto root = fs->get_root();
+    auto folder = fs->create_folder(root, "Agent回归");
+    auto older = fs->create_file(folder, "点名册.txt", "DO_NOT_UPLOAD_BODY_3812");
+    auto newer = fs->create_file(folder, "点名册1.txt", "DO_NOT_UPLOAD_BODY_3813");
+    check(fs->set_metadata(older, older->get_size(), "2026-10-14 09:00:00", "2026-10-15 12:00:00"), "fixture older metadata");
+    check(fs->set_metadata(newer, newer->get_size(), "2026-10-15 11:00:00", "2026-10-15 11:00:00"), "fixture newer metadata");
+    auto locked = fs->create_folder(folder, "AGENT_PRIVATE_DIRECTORY_12"); fs->set_locked(locked, true);
+    fs->create_file(locked, "AGENT_PRIVATE_NAME_12.txt", "AGENT_PRIVATE_BODY_12");
+    auto outside = fs->create_file(root, "OUTSIDE_AGENT_SCOPE.txt", "");
+    QHash<QString, FileNode*> handles;
+    auto snapshot = window.agent_search_snapshot(folder, handles);
+    const auto json = QJsonDocument(snapshot).toJson();
+    check(snapshot.size() == 2 && !json.contains("DO_NOT_UPLOAD_BODY") && !json.contains("AGENT_PRIVATE") && !handles.values().contains(outside), "agent snapshot excludes bodies, protected hierarchy and outside scope");
+    auto previousAccess = window.has_privacy_access, previousShow = window.show_privacy_mode;
+    window.has_privacy_access = window.show_privacy_mode = true;
+    QHash<QString, FileNode*> authorizedHandles;
+    const auto authorized = window.agent_search_snapshot(folder, authorizedHandles);
+    check(authorized.size() == 2 && window.agent_search_snapshot(locked, authorizedHandles).isEmpty(), "even unlocked privacy metadata never uploaded");
+    window.has_privacy_access = previousAccess; window.show_privacy_mode = previousShow;
+    QString id;
+    for (auto it = handles.begin(); it != handles.end(); ++it) if (it.value() == newer) id = it.key();
+    const QJsonArray selection{QJsonObject{{"id", id}, {"reason", "创建时间更晚，修改时间不是判断依据"}}};
+    const auto undoCount = window.undo_stack.size(); window.navigate_to("/Agent回归");
+    check(window.show_agent_search_results(snapshot, handles, selection, "找最新创建的点名册", "点名册1创建更晚"), "agent result accepted after live validation");
+    check(window.ui->list_files->count() == 1 && window.ui->list_files->item(0)->data(Qt::UserRole).value<FileNode*>() == newer, "agent can display one selected result rather than all keyword matches");
+    check(window.ui->list_files->item(0)->toolTip().contains("创建时间更晚") && window.undo_stack.size() == undoCount && fs->get_path(newer) == "/Agent回归/点名册1.txt", "agent explains without mutating or adding undo entries");
+    window.on_list_files_itemDoubleClicked(window.ui->list_files->item(0));
+    check(fs->get_current_directory() == folder && window.ui->list_files->currentItem()->data(Qt::UserRole).value<FileNode*>() == newer, "agent result double click locates selected file");
+    const auto oldCount = window.ui->list_files->count();
+    check(fs->set_metadata(newer, newer->get_size(), newer->get_created_time(), "2026-10-15 13:00:00"), "mutate fixture while request in flight");
+    check(!window.show_agent_search_results(snapshot, handles, selection, "test", "stale") && window.ui->list_files->count() == oldCount, "stale metadata does not replace current UI");
+    check(!window.show_agent_search_results(snapshot, handles, QJsonArray{QJsonObject{{"id", "invented"}, {"reason", "guess"}}}, "test", "invalid"), "fabricated integration id rejected");
+    window.ui->lineEdit_search->setText("点名册"); window.run_smart_search();
+    check(window.ui->list_files->count() == 2, "ordinary offline search remains usable after agent results");
     window.ui->lineEdit_search->clear(); window.navigate_to("/");
 }
 static void run() {
@@ -218,8 +256,9 @@ static void run() {
     check(window.file_header_->sortIndicatorSection() == 0 && window.file_header_->sortIndicatorOrder() == Qt::DescendingOrder, "header sort direction toggles");
     window.grab().save("navigation-and-header.png");
     semanticSearch(window);
+    readonlyAgentResults(window);
     qunsetenv("DEEPSEEK_API_KEY");
-    QTimer::singleShot(50, [] { auto dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget()); for (auto button : dialog->findChildren<QPushButton*>()) if (button->text().startsWith("发送")) button->click(); bool fallback = false; for (auto text : dialog->findChildren<QPlainTextEdit*>()) fallback |= text->toPlainText().contains("未配置"); check(fallback, "missing AI key fallback"); dialog->accept(); });
+    QTimer::singleShot(50, [] { auto dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget()); for (auto button : dialog->findChildren<QPushButton*>()) if (button->objectName() == "send_ai_task") button->click(); bool fallback = false; for (auto text : dialog->findChildren<QPlainTextEdit*>()) fallback |= text->toPlainText().contains("未配置"); check(fallback, "missing AI key fallback"); dialog->accept(); });
     window.open_ai_tools();
     std::cout << "[PASS] search/sort/classification/game-Games/undo, breadcrumb/invalid-path/history, pin/persistence/sidebar, blank selection, recycle visibility, privacy/AES, AI fallback\n";
 }

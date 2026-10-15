@@ -55,6 +55,7 @@ protected:
         ++calls; return new FakeReply(req, code, body, error, this);
     }
 };
+#include "agent_search_cases.h"
 static void waitFor(QPushButton* button) {
     QElapsedTimer timer; timer.start();
     while (!button->isEnabled() && timer.elapsed() < 2000) { QApplication::processEvents(); QThread::msleep(1); }
@@ -70,6 +71,8 @@ int main(int argc, char** argv) {
         AiCredentialStore::wipe(value); return 0;
     }
     QFontDatabase::addApplicationFont("C:/Windows/Fonts/msyh.ttc"); app.setFont(QFont("Microsoft YaHei", 10)); app.setStyleSheet(app_theme());
+    if (args.contains("--agent-live-smoke")) return agentLiveSmoke();
+    agentSearchCases();
     const QString target = "FileManager/Tests/AiSettings/" + QUuid::createUuid().toString(QUuid::WithoutBraces);
     AiCredentialStore store(target); QString error, source;
     cleanupTarget = target;

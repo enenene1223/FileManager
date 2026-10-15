@@ -57,7 +57,7 @@ target_sources(FileManager PRIVATE PrivacyCrypto.cpp PrivacyCrypto.h)
 # FileManager AES-256-GCM crypto dependency
 find_package(OpenSSL REQUIRED)
 target_link_libraries(FileManager PRIVATE OpenSSL::Crypto)
-target_sources(FileManager PRIVATE AdvancedTools.cpp AiTools.cpp)
+target_sources(FileManager PRIVATE AdvancedTools.cpp AiTools.cpp AiSearchAgent.cpp AiSearchAgent.h)
 # Compile the production AI settings into the application itself.
 set(FILEMANAGER_AI_SETTINGS_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/AiCredentialStore.cpp"
