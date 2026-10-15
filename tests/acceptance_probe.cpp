@@ -1,4 +1,9 @@
 #include "../mainwindow.h"
+#include "../logindialog.h"
+#include <QTemporaryDir>
+#include <QInputDialog>
+#include <QDir>
+#include <QScopeGuard>
 #include "ui_mainwindow.h"
 #include "../PrivacyCrypto.h"
 #include "../AppTheme.h"
@@ -222,6 +227,60 @@ static void summaryPreflight(MainWindow& window) {
     check(window.undo_stack.size() == undoCount && empty->get_content() == " \n\t" && secret->get_content() == "PRIVATE_SUMMARY_SENTINEL_20", "summary preflight leaves files and undo unchanged");
     window.navigate_to("/");
 }
+static void finalAccountsAndDamage(MainWindow& fixture) {
+    QTemporaryDir temporary; check(temporary.isValid(), "isolated account fixture directory");
+    const auto original = QDir::currentPath(); check(QDir::setCurrent(temporary.path()), "enter isolated fixture");
+    auto restoreDirectory = qScopeGuard([original] { QDir::setCurrent(original); });
+    QFile users("users.txt"); check(users.open(QIODevice::WriteOnly), "create synthetic account fixture");
+    users.write(("verify_a|" + fixture.hashPassword("demo-pass-a") + "|" + fixture.hashPassword("private-a") + "\nverify_b|" + fixture.hashPassword("demo-pass-b") + "|" + fixture.hashPassword("private-b") + "\n").toUtf8()); users.close();
+    LoginDialog login; login.findChild<QLineEdit*>("lineEdit_user")->setText("verify_a"); login.findChild<QLineEdit*>("lineEdit_pass")->setText("wrong");
+    QTimer::singleShot(30, [] { auto box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget()); check(box && box->text().contains("密码错误"), "wrong password message"); box->accept(); });
+    login.findChild<QPushButton*>("btn_login")->click(); check(login.result() != QDialog::Accepted, "wrong password does not log in");
+    login.findChild<QLineEdit*>("lineEdit_pass")->setText("demo-pass-a"); login.findChild<QPushButton*>("btn_login")->click();
+    check(login.result() == QDialog::Accepted && login.get_username() == "verify_a", "correct credentials log in as intended account");
+    {
+        MainWindow a("verify_a"), b("verify_b");
+        auto aFile = a.file_system->create_file(a.file_system->get_root(), "a-only.txt", "account-a-only");
+        b.file_system->create_file(b.file_system->get_root(), "b-only.txt", "account-b-only");
+        check(a.save_data() && b.save_data(), "two accounts save separately");
+        MainWindow aReload("verify_a"), bReload("verify_b");
+        check(aReload.file_system->find_by_path("/a-only.txt") && !aReload.file_system->find_by_path("/b-only.txt")
+            && bReload.file_system->find_by_path("/b-only.txt") && !bReload.file_system->find_by_path("/a-only.txt"), "persisted account data isolation");
+        a.navigate_to("/"); select(a, aFile); a.on_btn_copy_clicked(); check(a.clipboard_node != nullptr, "logout fixture clipboard populated");
+        a.show();
+        QTimer::singleShot(30, [] { auto box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget()); check(box && box->windowTitle() == "注销", "logout confirmation"); box->button(QMessageBox::Yes)->click(); });
+        a.on_btn_logout_clicked();
+        check(!a.isVisible(), "logout closes user window");
+        check(a.file_system == nullptr && a.clipboard_node == nullptr && a.undo_stack.empty(), "logout clears old user data, clipboard and undo");
+        check(qApp->property("is_logout_requested").toBool(), "logout requests next login cycle");
+        qApp->setProperty("is_logout_requested", false);
+    }
+    LoginDialog second; second.findChild<QLineEdit*>("lineEdit_user")->setText("verify_b"); second.findChild<QLineEdit*>("lineEdit_pass")->setText("demo-pass-b");
+    second.findChild<QPushButton*>("btn_login")->click(); check(second.get_username() == "verify_b", "second user can log in after logout");
+    QFile accountFile("users.txt"); check(accountFile.open(QIODevice::ReadOnly), "read account fixture before guarded password change");
+    const auto accountsBefore = accountFile.readAll(); accountFile.close();
+    QFile encryptedRecord("data_verify_a.txt"); check(encryptedRecord.open(QIODevice::WriteOnly | QIODevice::Append), "add synthetic encryption marker"); encryptedRecord.write("KDF1|synthetic-test-marker|\n"); encryptedRecord.close();
+    QTimer::singleShot(30, [] {
+        auto username = qobject_cast<QInputDialog*>(QApplication::activeModalWidget()); check(username, "privacy change asks username"); username->setTextValue("verify_a"); username->accept();
+        QTimer::singleShot(30, [] {
+            auto password = qobject_cast<QInputDialog*>(QApplication::activeModalWidget()); check(password, "privacy change verifies old password"); password->setTextValue("private-a"); password->accept();
+            QTimer::singleShot(30, [] { auto box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget()); check(box && box->windowTitle().contains("暂不支持加密存档改密"), "existing encrypted archive blocks unsafe password replacement"); box->accept(); });
+        });
+    });
+    QMetaObject::invokeMethod(&second, "on_btn_modify_privacy_clicked", Qt::DirectConnection);
+    check(accountFile.open(QIODevice::ReadOnly) && accountFile.readAll() == accountsBefore, "password guard preserves credential records"); accountFile.close();
+    QByteArray good;
+    { MainWindow healthy("verify_damage"); healthy.file_system->create_file(healthy.file_system->get_root(), "good.txt", "good-data"); check(healthy.save_data(), "create healthy damage fixture"); }
+    QFile archive("data_verify_damage.txt"); check(archive.open(QIODevice::ReadOnly), "read valid fixture"); good = archive.readAll(); archive.close();
+    QByteArray damaged = good.left(good.size() / 2); check(archive.open(QIODevice::WriteOnly | QIODevice::Truncate), "damage only synthetic archive"); archive.write(damaged); archive.close();
+    QTimer::singleShot(30, [] { auto box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget()); check(box && box->windowTitle().contains("存档加载失败"), "damaged archive announces protection"); box->accept(); });
+    { MainWindow broken("verify_damage"); check(broken.data_load_blocked_, "damaged archive blocks writes");
+      QTimer::singleShot(30, [] { auto box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget()); check(box && box->windowTitle().contains("禁止覆盖"), "damaged archive refuses overwrite"); box->accept(); });
+      check(!broken.save_data(), "saving damaged archive is refused"); }
+    check(archive.open(QIODevice::ReadOnly) && archive.readAll() == damaged, "damaged original preserved byte-for-byte"); archive.close();
+    check(archive.open(QIODevice::WriteOnly | QIODevice::Truncate), "restore synthetic backup"); archive.write(good); archive.close();
+    { MainWindow recovered("verify_damage"); check(!recovered.data_load_blocked_ && recovered.file_system->find_by_path("/good.txt"), "restoring known-good backup recovers data"); }
+}
 static void run() {
     MainWindow window("acceptance"); window.show(); QApplication::processEvents();
     window.ai_credentials_ = AiCredentialStore("FileManager/Tests/MissingKey/" + QUuid::createUuid().toString(QUuid::WithoutBraces));
@@ -362,6 +421,7 @@ static void run() {
     aiClassificationChoices(window);
     filterOnlySearch(window);
     summaryPreflight(window);
+    finalAccountsAndDamage(window);
     qunsetenv("DEEPSEEK_API_KEY");
     QTimer::singleShot(50, [] { auto dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget()); for (auto button : dialog->findChildren<QPushButton*>()) if (button->objectName() == "send_ai_task") button->click(); bool fallback = false; for (auto text : dialog->findChildren<QPlainTextEdit*>()) fallback |= text->toPlainText().contains("未配置"); check(fallback, "missing AI key fallback"); dialog->accept(); });
     window.open_ai_tools();

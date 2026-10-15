@@ -67,6 +67,21 @@ int main()
     expect(fs.permanent_delete(source), "permanent delete succeeds");
     expect(!fs.is_in_recycle_bin(source), "permanently deleted folder leaves recycle bin");
 
+    FileNode* restoreFolder = fs.create_folder(root, "restore-check");
+    FileNode* restoreFile = fs.create_file(restoreFolder, "original.txt", "restored");
+    expect(fs.rename_node(restoreFile, "renamed.txt"), "rename updates file");
+    expect(fs.create_file(restoreFolder, "renamed.txt", "duplicate") == nullptr, "duplicate creation rejected");
+    FileNode* sibling = fs.create_file(restoreFolder, "sibling.txt", "sibling");
+    expect(!fs.rename_node(sibling, "renamed.txt"), "rename collision rejected");
+    expect(fs.delete_node(restoreFile), "delete before restore");
+    FileNode* collision = fs.create_file(restoreFolder, "renamed.txt", "collision");
+    expect(!fs.restore_node(restoreFile, restoreFolder), "restore collision rejected without overwriting");
+    expect(fs.is_in_recycle_bin(restoreFile) && collision->get_content() == "collision", "failed restore preserves both entries");
+    expect(fs.rename_node(collision, "collision.txt"), "free restore name");
+    expect(fs.restore_node(restoreFile, restoreFolder), "recycle restoration succeeds");
+    expect(restoreFile->get_content() == "restored" && fs.get_path(restoreFile) == "/restore-check/renamed.txt", "restoration retains content and path");
+    expect(fs.delete_node(sibling), "delete before clear recycle"); fs.clear_recycle_bin();
+    expect(!fs.is_in_recycle_bin(sibling), "clear recycle removes entries");
     std::cout << "[PASS] copy/move/recursive core operations" << std::endl;
     return 0;
 }

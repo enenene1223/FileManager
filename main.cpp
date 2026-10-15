@@ -22,7 +22,7 @@ int main(int argc, char *argv[])
         }
     }
 
-    // 👇 使用循环，允许注销后重新弹出登录界面
+    // 使用循环，允许注销后重新弹出登录界面
     while (true) {
         LoginDialog login;
         if (a.arguments().contains("--smoke-test"))

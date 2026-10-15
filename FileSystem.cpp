@@ -23,7 +23,6 @@ static bool is_valid_txt_filename(const std::string& name)
                ) == 0;
 }
 
-
 namespace {
 bool contains_forbidden_name_character(const std::string &name)
 {
@@ -307,6 +306,7 @@ bool FileSystem::rename_node(FileNode *node, const std::string &new_name)
     node->modified_time_ = now_string();
     return true;
 }
+
 
 bool FileSystem::move_node(FileNode *node, FileNode *target_parent)
 {
@@ -1280,6 +1280,7 @@ bool FileSystem::restore_recycle_data(FileNode* node, const std::string& content
     node->modified_time_ = modified_time.empty() ? now_string() : modified_time;
     return true;
 }
+
 
 bool FileSystem::restore_recycle_lock_state(
     FileNode* node, bool locked)

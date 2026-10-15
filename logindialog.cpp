@@ -2,6 +2,7 @@
 #include "ui_logindialog.h"
 #include <QCryptographicHash>
 #include <QFile>
+#include <QFileInfo>
 #include <QTextStream>
 #include <QMessageBox>
 #include <QInputDialog>
@@ -23,13 +24,12 @@ LoginDialog::~LoginDialog()
     delete ui;
 }
 
-
-
 // 加盐哈希，防止彩虹表破解
 QString hashPassword(const QString& password) {
     QString salt = "FileManager_Salt_2024"; // 固定盐值，也可以每个用户随机生成存到用户文件里
     return QString(QCryptographicHash::hash((password + salt).toUtf8(), QCryptographicHash::Sha256).toHex());
 }
+
 //注册
 void LoginDialog::on_btn_register_clicked()
 {
@@ -133,6 +133,7 @@ void LoginDialog::on_btn_login_clicked() {
 QString LoginDialog::get_username() const {
     return current_user;
 }
+
 void LoginDialog::on_btn_modify_privacy_clicked()
 {
 
@@ -177,6 +178,19 @@ void LoginDialog::on_btn_modify_privacy_clicked()
             return;
         }
 
+        // Changing only the account hash would strand existing AES-GCM ciphertext.
+        QFile archive("data_" + username + ".txt");
+        if (QFileInfo::exists(archive.fileName())) {
+            if (!archive.open(QIODevice::ReadOnly)) {
+                QMessageBox::warning(this, "无法安全修改", "无法读取已有存档，未修改隐私密码。请先备份并检查文件权限。");
+                return;
+            }
+            const auto data = archive.readAll();
+            if (archive.error() != QFileDevice::NoError || data.isEmpty() || data.contains("KDF1|") || data.contains("|E1|")) {
+                QMessageBox::warning(this, "暂不支持加密存档改密", "账户已有加密记录，或存档无法确认完整。为避免旧密文无法解密，本版本不会仅修改密码记录。\n请保留现有隐私密码并备份存档；登录密码不受影响。");
+                return;
+            }
+        }
         // 4. 输入新隐私密码
         QString newPrivacyPass = QInputDialog::getText(this, "修改隐私密码", "请输入新隐私密码：", QLineEdit::Password, "", &ok);
         if (!ok || newPrivacyPass.isEmpty()) return;

@@ -14,15 +14,15 @@ class LoginDialog : public QDialog
 public:
     explicit LoginDialog(QWidget *parent = nullptr);
     ~LoginDialog();
-    QString get_username() const; // 供主界面读取当前登录的是谁
+    QString get_username() const; // 供主界面读取当前登录用户
 
 private:
     Ui::LoginDialog *ui;
       QString current_user;
 
 private slots:
-    void on_btn_register_clicked(); // 👈 注册按钮的槽函数声明
-    void on_btn_login_clicked();    // 👈 登录按钮的槽函数声明
+    void on_btn_register_clicked(); // 注册按钮的槽函数声明
+    void on_btn_login_clicked();    // 登录按钮的槽函数声明
     void on_btn_modify_privacy_clicked();
 };
 

@@ -2,6 +2,9 @@
 set(app_source_dir "${PROJECT_SOURCE_DIR}")
 qt_add_executable(acceptance_probe
     acceptance_probe.cpp
+    "${app_source_dir}/logindialog.cpp"
+    "${app_source_dir}/logindialog.h"
+    "${app_source_dir}/logindialog.ui"
     "${app_source_dir}/mainwindow.cpp"
     "${app_source_dir}/mainwindow.h"
     "${app_source_dir}/mainwindow.ui"

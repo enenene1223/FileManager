@@ -31,6 +31,7 @@ public:
     std::string new_path;
 };
 
+
 // 链式栈，供撤销模块直接使用。
 class OperationStack
 {
