@@ -1366,7 +1366,7 @@ void MainWindow::refresh_file_list()
 {
     search_index_valid_ = false; search_index_nodes_.clear(); search_name_index_.clear();
     search_mode_ = false;
-    if (classify_button_) classify_button_->setVisible(!recycle_mode);
+    if (classify_button_) classify_button_->setVisible(!recycle_mode && !privacy_overview_mode);
     sync_breadcrumbs();
     if (search_options_button_ && !ui->lineEdit_search->hasFocus()) search_options_button_->hide();
     auto sortOnExit = qScopeGuard([this] { apply_file_sort(); });
